@@ -164,6 +164,15 @@ class Chain:
             for child_idx, child in enumerate(children_lists[node]):
                 self.children_array[node, child_idx] = child
                 self.children_count[node] += 1
+
+        # Pre-compute topological order
+        self.topo_order = []
+        stack = [i for i, p in enumerate(self.parent_array.tolist()) if p == -1]
+        while stack:
+            node_idx = stack.pop(0)
+            self.topo_order.append(node_idx)
+            child_count = int(self.children_count[node_idx].item())
+            stack.extend(self.children_array[node_idx, :child_count].tolist())
         
         # Pre-compute spatial inertias for ALL links (batched)
         self.spatial_inertias = self._precompute_all_spatial_inertias(n_nodes)

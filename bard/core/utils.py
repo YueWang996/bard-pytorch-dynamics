@@ -352,8 +352,8 @@ def to_matrix44(transform) -> Optional[torch.Tensor]:
     Returns:
         4×4 matrix or None
     """
-    if transform is None:
-        return None
+    if transform is None or isinstance(transform, torch.Tensor):
+        return transform
     if hasattr(transform, "get_matrix"):
         return transform.get_matrix()
     return transform
@@ -446,6 +446,9 @@ def normalize_joint_positions(
     Returns:
         Batched tensor (B, n_joints)
     """
+    if isinstance(q, torch.Tensor):
+        return torch.atleast_2d(q.to(dtype=chain.dtype, device=chain.device))
+    
     if hasattr(chain, "ensure_tensor"):
         q_tensor = chain.ensure_tensor(q)
     else:

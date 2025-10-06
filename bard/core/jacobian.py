@@ -17,13 +17,11 @@ from .utils import (
 )
 
 
-# ---------- robust POE Jacobian for Chain (full-dim, returns 6 x n_dof) ----------
-@torch.compile
 def calc_jacobian(
     chain: chain.Chain,
     q: torch.Tensor,
     frame_id: Optional[Union[int, str]],
-    reference_frame: str = "world",  # "world" (default) or "local"
+    reference_frame: str = "world",
     return_eef_pose: bool = False,
 ):
     """Calculates the kinematic Jacobian for a specific frame.
@@ -50,6 +48,38 @@ def calc_jacobian(
             - If `return_eef_pose` is True, a tuple containing the Jacobian
               and the (B, 4, 4) pose matrix of the frame.
     """
+    # Resolve frame index outside compiled region
+    if isinstance(frame_id, str):
+        tgt_idx = chain.get_frame_indices(frame_id).item()
+    else:
+        tgt_idx = int(frame_id)
+    
+    # Extract path nodes (list of ints, not tensors)
+    path_nodes = [int(node.item()) for node in chain.parents_indices[tgt_idx]]
+    
+    # Pre-extract chain data
+    joint_indices = chain.joint_indices
+    joint_type_indices = chain.joint_type_indices
+    axes = chain.axes
+    
+    return _calc_jacobian_compiled(
+        chain, q, path_nodes, reference_frame, return_eef_pose,
+        joint_indices, joint_type_indices, axes
+    )
+
+
+@torch.compile
+def _calc_jacobian_compiled(
+    chain,
+    q: torch.Tensor,
+    path_nodes: List[int],
+    reference_frame: str,
+    return_eef_pose: bool,
+    joint_indices: torch.Tensor,
+    joint_type_indices: torch.Tensor,
+    axes: torch.Tensor,
+):
+    """Compiled Jacobian calculation."""
     # normalize inputs
     if hasattr(chain, "ensure_tensor"):
         q_in = chain.ensure_tensor(q)
@@ -81,17 +111,10 @@ def calc_jacobian(
         )
 
     # Precompute per-joint motion transforms using articulated joint values
-    axes = chain.axes.to(dtype=dtype, device=device)
+    axes = axes.to(dtype=dtype, device=device)
     axes_expanded = axes.unsqueeze(0).repeat(B, 1, 1)
     T_rev = axis_and_angle_to_matrix_44(axes_expanded, q_j)
     T_pri = axis_and_d_to_pris_matrix(axes_expanded, q_j)
-
-    # Identify node indices along the path root->target frame
-    if isinstance(frame_id, str):
-        tgt_idx = chain.get_frame_indices(frame_id).item()
-    else:
-        tgt_idx = int(frame_id)
-    path_nodes = chain.parents_indices[tgt_idx]
 
     # PASS 1: accumulate WORLD transforms and store WORLD->joint_origin for joints on the path
     I44 = identity_transform(B, dtype, device)
@@ -133,11 +156,11 @@ def calc_jacobian(
     active_joint_cols = []
     active_joint_axes_local = []
 
-    for node_idx_t in path_nodes:
-        i = int(node_idx_t)
-        T_joint_off = to_matrix44(chain.joint_offsets[i])
+    for node_idx_int in path_nodes:
+        T_joint_off = chain.joint_offsets[node_idx_int]
         T_joint_origin = as_batched_transform(T_joint_off, B, dtype, device)
-        j_idx, j_type = int(chain.joint_indices[i]), int(chain.joint_type_indices[i])
+        j_idx = joint_indices[node_idx_int]
+        j_type = joint_type_indices[node_idx_int]
 
         T_world_to_joint_origin = T_world_to_current @ T_joint_origin
 
@@ -154,7 +177,7 @@ def calc_jacobian(
         else:  # fixed
             T_motion = I44
 
-        T_link_off = to_matrix44(chain.link_offsets[i])
+        T_link_off = chain.link_offsets[node_idx_int]
         T_link = as_batched_transform(T_link_off, B, dtype, device)
         T_world_to_current = T_world_to_current @ T_joint_origin @ T_motion @ T_link
 

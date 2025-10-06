@@ -19,7 +19,6 @@ from bard.transforms import (
 from .utils import (
     identity_transform,
     as_batched_transform,
-    to_matrix44,
     inv_homogeneous,
     spatial_adjoint,
     motion_cross_product,
@@ -76,14 +75,15 @@ def calc_inverse_dynamics(
         for i in range(n_nodes)
     ]
     
-    # Pre-extract other chain data that needs .item() calls
+    # Pre-extract chain data
+    topo_order = chain.topo_order
     joint_indices = chain.joint_indices
     joint_type_indices = chain.joint_type_indices
     axes = chain.axes
     spatial_inertias = chain.spatial_inertias
     
     return _calc_inverse_dynamics_compiled(
-        chain, q, qd, qdd, gravity, parent, children,
+        chain, q, qd, qdd, gravity, parent, children, topo_order,
         joint_indices, joint_type_indices, axes, spatial_inertias
     )
 
@@ -97,6 +97,7 @@ def _calc_inverse_dynamics_compiled(
     gravity: Optional[torch.Tensor],
     parent: List[int],
     children: List[List[int]],
+    topo_order: List[int],
     joint_indices: torch.Tensor,
     joint_type_indices: torch.Tensor,
     axes: torch.Tensor,
@@ -138,14 +139,6 @@ def _calc_inverse_dynamics_compiled(
     parent_tensor = torch.tensor(parent, device=device, dtype=torch.long)
     joint_indices = joint_indices.to(device=device, dtype=torch.long)
     joint_type_indices = joint_type_indices.to(device=device, dtype=torch.long)
-
-    # Topological sort
-    topo_order = []
-    stack = [i for i, p in enumerate(parent) if p == -1]
-    while stack:
-        node_idx = stack.pop(0)
-        topo_order.append(node_idx)
-        stack.extend(children[node_idx])
 
     axes = axes.to(dtype=dtype, device=device)
     axes = axes / axes.norm(dim=-1, keepdim=True).clamp_min(1e-12)
@@ -202,10 +195,10 @@ def _calc_inverse_dynamics_compiled(
         p_idx = parent_tensor[node_idx]
 
         T_joint_offset = as_batched_transform(
-            to_matrix44(chain.joint_offsets[node_idx]), batch_size, dtype, device
+            chain.joint_offsets[node_idx], batch_size, dtype, device
         )
         T_link_offset = as_batched_transform(
-            to_matrix44(chain.link_offsets[node_idx]), batch_size, dtype, device
+            chain.link_offsets[node_idx], batch_size, dtype, device
         )
         
         # Calculate all motion transforms, then select with where
@@ -384,13 +377,14 @@ def crba_inertia_matrix(
     ]
     
     # Pre-extract chain data
+    topo_order = chain.topo_order
     joint_indices = chain.joint_indices
     joint_type_indices = chain.joint_type_indices
     axes = chain.axes
     spatial_inertias = chain.spatial_inertias
     
     return _crba_inertia_matrix_compiled(
-        chain, q, parent, children,
+        chain, q, parent, children, topo_order,
         joint_indices, joint_type_indices, axes, spatial_inertias
     )
 
@@ -401,6 +395,7 @@ def _crba_inertia_matrix_compiled(
     q: torch.Tensor,
     parent: List[int],
     children: List[List[int]],
+    topo_order: List[int],
     joint_indices: torch.Tensor,
     joint_type_indices: torch.Tensor,
     axes: torch.Tensor,
@@ -429,15 +424,7 @@ def _crba_inertia_matrix_compiled(
 
     # Build tree structure
     n_nodes = len(parent)
-    base_nodes = [i for i, p in enumerate(parent) if p == -1]
     
-    topo_order = []
-    stack = base_nodes[:]
-    while stack:
-        node_idx = stack.pop(0)
-        topo_order.append(node_idx)
-        stack.extend(children[node_idx])
-
     # Precompute transforms
     axes_raw = axes.to(dtype=dtype, device=device)
     axes_norm = axes_raw / axes_raw.norm(dim=-1, keepdim=True).clamp_min(1e-12)
@@ -459,10 +446,10 @@ def _crba_inertia_matrix_compiled(
         joint_type_idx = joint_type_indices[node_idx]
 
         T_joint_offset = as_batched_transform(
-            to_matrix44(chain.joint_offsets[node_idx]), batch_size, dtype, device
+            chain.joint_offsets[node_idx], batch_size, dtype, device
         )
         T_link_offset = as_batched_transform(
-            to_matrix44(chain.link_offsets[node_idx]), batch_size, dtype, device
+            chain.link_offsets[node_idx], batch_size, dtype, device
         )
 
         if joint_type_idx == Joint.TYPES.index('revolute'):

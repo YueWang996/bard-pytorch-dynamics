@@ -1,3 +1,4 @@
+from typing import List
 import torch
 import bard.transforms as tf
 from bard.core import chain
@@ -8,18 +9,15 @@ from bard.transforms import (
 )
 
 from .utils import (
-    build_parent_children,
     identity_transform,
     as_batched_transform,
     inv_homogeneous,
     motion_cross_product,
     spatial_adjoint,
-    to_matrix44,
     normalize_joint_positions,
 )
 
 
-@torch.compile
 def calc_forward_kinematics(
     chain: chain.Chain,
     q: torch.Tensor,
@@ -42,12 +40,38 @@ def calc_forward_kinematics(
             batched (B, 4, 4) homogeneous transformation matrices representing
             the world pose of the frame.
     """
+    # Resolve frame index outside compiled region
+    tgt_idx = chain.get_frame_indices(frame_id).item() if isinstance(frame_id, str) else int(frame_id)
+    
+    # Extract path nodes (list of ints, not tensors)
+    path_nodes = [int(node.item()) for node in chain.parents_indices[tgt_idx]]
+    
+    # Pre-extract chain data
+    joint_indices = chain.joint_indices
+    joint_type_indices = chain.joint_type_indices
+    axes = chain.axes
+    
+    return _calc_forward_kinematics_compiled(
+        chain, q, path_nodes, joint_indices, joint_type_indices, axes
+    )
+
+
+@torch.compile
+def _calc_forward_kinematics_compiled(
+    chain,
+    q: torch.Tensor,
+    path_nodes: List[int],
+    joint_indices: torch.Tensor,
+    joint_type_indices: torch.Tensor,
+    axes: torch.Tensor,
+) -> tf.Transform3d:
+    """Compiled forward kinematics calculation."""
     # ---- normalize inputs ----
     q_in = normalize_joint_positions(chain, q)  # (B, D)
     B, D = q_in.shape
     dtype, device = chain.dtype, chain.device
 
-    # ---- split floating-base vs joint coordinates (robust to legacy chains) ----
+    # ---- split floating-base vs joint coordinates ----
     has_fb = bool(getattr(chain, "has_floating_base", False))
     nq_base = 7 if has_fb else 0
     expect_with_base = (chain.n_joints + nq_base)
@@ -56,18 +80,15 @@ def calc_forward_kinematics(
         q_base = q_in[:, :7]          # [tx,ty,tz, qw,qx,qy,qz]
         q_j    = q_in[:, 7:]
     else:
-        # Treat as fixed-base inputs (or legacy caller that only passed joints)
+        # Treat as fixed-base inputs
         q_base = None
         q_j    = q_in
 
-    # ---- resolve frame index (accept name for convenience, API prefers index) ----
-    tgt_idx = chain.get_frame_indices(frame_id).item() if isinstance(frame_id, str) else int(frame_id)
-
     # ---- precompute joint motion transforms (vectorized over batch) ----
-    axes = chain.axes.to(dtype=dtype, device=device)                         # (nJ, 3)
-    axes = axes / axes.norm(dim=-1, keepdim=True).clamp_min(1e-12)           # ensure unit
-    axes_exp = axes.unsqueeze(0).expand(B, -1, -1)                            # (B, nJ, 3)
-    q_cast  = q_j.to(dtype=dtype)                                             # (B, nJ)
+    axes = axes.to(dtype=dtype, device=device)
+    axes = axes / axes.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+    axes_exp = axes.unsqueeze(0).expand(B, -1, -1)
+    q_cast  = q_j.to(dtype=dtype)
 
     T_rev = axis_and_angle_to_matrix_44(axes_exp, q_cast)  # (B, nJ, 4, 4)
     T_pri = axis_and_d_to_pris_matrix(axes_exp, q_cast)    # (B, nJ, 4, 4)
@@ -97,22 +118,21 @@ def calc_forward_kinematics(
         R_base_to_world[:, 2, 2] = 1.0 - (x2 + y2)
 
         T = torch.zeros(B, 4, 4, dtype=dtype, device=device)
-        T[:, :3, :3] = R_base_to_world  # No transpose!
+        T[:, :3, :3] = R_base_to_world
         T[:, :3,  3] = t
         T[:,  3,  3] = 1.0
     else:
         T = identity_transform(B, dtype, device).clone()
 
     # ---- accumulate WORLD transform along the path root->target ----
-    for node_idx in chain.parents_indices[tgt_idx]:
-        i = int(node_idx)
-
+    for node_idx_int in path_nodes:
         # parent -> joint origin
-        T_joint = as_batched_transform(to_matrix44(chain.joint_offsets[i]), B, dtype, device)
+        T_joint = as_batched_transform(chain.joint_offsets[node_idx_int], B, dtype, device)
 
         # joint motion in JOINT frame
-        j_idx  = int(chain.joint_indices[i])
-        j_type = int(chain.joint_type_indices[i])
+        j_idx  = joint_indices[node_idx_int]
+        j_type = joint_type_indices[node_idx_int]
+        
         if j_type == Joint.TYPES.index('revolute'):
             T_motion = T_rev[:, j_idx]
         elif j_type == Joint.TYPES.index('prismatic'):
@@ -123,7 +143,7 @@ def calc_forward_kinematics(
             raise NotImplementedError(f"Unsupported joint type index: {j_type}")
 
         # joint -> child link
-        T_link = as_batched_transform(to_matrix44(chain.link_offsets[i]), B, dtype, device)
+        T_link = as_batched_transform(chain.link_offsets[node_idx_int], B, dtype, device)
 
         # compose this node (WORLD <- parent) ∘ joint ∘ motion ∘ link
         T = T @ T_joint @ T_motion @ T_link
@@ -140,7 +160,7 @@ def calc_forward_kinematics(
     # ---- return WORLD pose of the requested frame ----
     return tf.Transform3d(matrix=T)
 
-@torch.compile
+
 def end_effector_acceleration(
     chain,
     q: torch.Tensor,
@@ -168,6 +188,43 @@ def end_effector_acceleration(
         torch.Tensor: The spatial acceleration vector [linear; angular] of
             shape (B, 6).
     """
+    # Extract tree structure ONCE outside compiled region
+    parent = chain.parent_array.tolist()
+    n_nodes = len(parent)
+    children = [
+        chain.children_array[i, :chain.children_count[i]].tolist() 
+        for i in range(n_nodes)
+    ]
+    
+    # Resolve frame index
+    node_idx = chain.get_frame_indices(frame_name).item() if isinstance(frame_name, str) else int(frame_name)
+    
+    # Pre-extract chain data
+    joint_indices = chain.joint_indices
+    joint_type_indices = chain.joint_type_indices
+    axes = chain.axes
+    
+    return _end_effector_acceleration_compiled(
+        chain, q, qd, qdd, node_idx, reference_frame,
+        parent, children, joint_indices, joint_type_indices, axes
+    )
+
+
+@torch.compile
+def _end_effector_acceleration_compiled(
+    chain,
+    q: torch.Tensor,
+    qd: torch.Tensor,
+    qdd: torch.Tensor,
+    node_idx: int,
+    reference_frame: str,
+    parent: List[int],
+    children: List[List[int]],
+    joint_indices: torch.Tensor,
+    joint_type_indices: torch.Tensor,
+    axes: torch.Tensor,
+):
+    """Compiled end-effector acceleration calculation."""
     dtype, device = chain.dtype, chain.device
 
     # Normalize inputs
@@ -200,7 +257,6 @@ def end_effector_acceleration(
     a_world0 = torch.zeros((B, 6), dtype=dtype, device=device)
 
     # Tree topology
-    parent, children = build_parent_children(chain)
     n_nodes = len(parent)
     base_nodes = [i for i, p in enumerate(parent) if p == -1]
     topo = []
@@ -211,9 +267,9 @@ def end_effector_acceleration(
         stack.extend(children[i])
 
     # Precompute joint transforms
-    axes_raw = chain.axes.to(dtype=dtype, device=device)
-    axes = axes_raw / axes_raw.norm(dim=-1, keepdim=True).clamp_min(1e-12)
-    axes_exp = axes.unsqueeze(0).expand(B, -1, -1)
+    axes_raw = axes.to(dtype=dtype, device=device)
+    axes_norm = axes_raw / axes_raw.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+    axes_exp = axes_norm.unsqueeze(0).expand(B, -1, -1)
     T_rev = axis_and_angle_to_matrix_44(axes_exp, q_j)
     T_pri = axis_and_d_to_pris_matrix(axes_exp, q_j)
 
@@ -251,12 +307,12 @@ def end_effector_acceleration(
 
     # Forward pass
     for i in topo:
-        j_idx = int(chain.joint_indices[i])
-        j_type = int(chain.joint_type_indices[i])
+        j_idx = joint_indices[i]
+        j_type = joint_type_indices[i]
 
         # Joint and link offsets
-        T_joint = as_batched_transform(to_matrix44(chain.joint_offsets[i]), B, dtype, device)
-        T_link = as_batched_transform(to_matrix44(chain.link_offsets[i]), B, dtype, device)
+        T_joint = as_batched_transform(chain.joint_offsets[i], B, dtype, device)
+        T_link = as_batched_transform(chain.link_offsets[i], B, dtype, device)
 
         # Joint motion
         if j_type == Joint.TYPES.index('revolute'):
@@ -275,7 +331,7 @@ def end_effector_acceleration(
 
         # Joint subspace in child frame
         if j_type in [Joint.TYPES.index('revolute'), Joint.TYPES.index('prismatic')]:
-            axis_local = axes[j_idx].view(1, 3).expand(B, -1)
+            axis_local = axes_norm[j_idx].view(1, 3).expand(B, -1)
             twist_joint = torch.zeros((B, 6), dtype=dtype, device=device)
             if j_type == Joint.TYPES.index('revolute'):
                 twist_joint[:, 3:] = axis_local
@@ -309,16 +365,15 @@ def end_effector_acceleration(
         T_world_to_node[i] = T_world_to_parent @ T_parent_to_child
 
     # Select frame
-    node_idx = chain.get_frame_indices(frame_name).item() if isinstance(frame_name, str) else int(frame_name)
     a_local = a[node_idx]
 
     ref = reference_frame.lower()
     if ref in ("local", "body", "frame"):
-        return a_local.squeeze(0)
+        return a_local.squeeze(0) if B == 1 else a_local
     
     if ref in ("world", "global"):
         Ad_world_wrt_body = spatial_adjoint(T_world_to_node[node_idx])
         a_world = (Ad_world_wrt_body @ a_local.unsqueeze(-1)).squeeze(-1)
-        return a_world.squeeze(0)
+        return a_world.squeeze(0) if B == 1 else a_world
     
     raise ValueError(f"reference_frame must be 'local' or 'world', got: {reference_frame!r}")
