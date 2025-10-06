@@ -1,0 +1,103 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bard"
+version = "0.1"
+description = "Batched Articulated Robot Dynamics - Efficient robot kinematics and dynamics in PyTorch"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Yue Wang", email = "yue.wang@soton.ac.uk"}
+]
+maintainers = [
+    {name = "Yue Wang", email = "yue.wang@soton.ac.uk"}
+]
+keywords = [
+    "robotics",
+    "kinematics", 
+    "dynamics",
+    "pytorch",
+    "batch-processing",
+    "differentiable",
+    "rigid-body-dynamics"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Robotics",
+]
+
+dependencies = [
+    "torch>=1.10.0",
+    "numpy>=1.19.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-benchmark>=4.0",
+    "black>=23.0",
+    "isort>=5.12",
+    "flake8>=6.0",
+    "mypy>=1.0",
+    "pinocchio>=3.7",
+]
+docs = [
+    "sphinx>=5.0",
+    "sphinx-rtd-theme>=1.2",
+    "sphinx-autodoc-typehints>=1.23",
+]
+examples = [
+    "matplotlib>=3.5.0",
+    "jupyter>=1.0.0",
+    "ipython>=8.0",
+]
+all = ["bard[dev,docs,examples]"]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/bard"
+Documentation = "https://bard.readthedocs.io"
+Repository = "https://github.com/yourusername/bard"
+Issues = "https://github.com/yourusername/bard/issues"
+Changelog = "https://github.com/yourusername/bard/blob/main/CHANGELOG.md"
+
+[tool.setuptools]
+packages = ["bard"]
+
+[tool.setuptools.package-data]
+bard = ["py.typed"]
+
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311']
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = ""
