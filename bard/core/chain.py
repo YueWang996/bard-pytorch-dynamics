@@ -126,6 +126,8 @@ class Chain:
             
             idx += 1
         
+        n_nodes = idx
+        
         self.joint_type_indices = torch.tensor(
             joint_type_indices_list, dtype=torch.long, device=self.device
         )
@@ -136,6 +138,102 @@ class Chain:
             torch.tensor(p, dtype=torch.long, device=self.device) 
             for p in self.parents_indices
         ]
+
+        # Pre-compute parent-child relationships as tensors
+        self.parent_array = torch.full((n_nodes,), -1, dtype=torch.long, device=self.device)
+        children_lists = [[] for _ in range(n_nodes)]
+        
+        for node in range(n_nodes):
+            path = self.parents_indices[node]
+            if len(path) > 1:
+                p = int(path[-2].item())  # Do .item() ONCE during init
+                self.parent_array[node] = p
+                children_lists[p].append(node)
+        
+        # Calculate max_children AFTER populating children_lists
+        max_children = max((len(children_lists[i]) for i in range(n_nodes)), default=0)
+        
+        # Handle edge case: if no node has children, still need at least size 1 to avoid empty tensor
+        if max_children == 0:
+            max_children = 1
+        
+        self.children_array = torch.full((n_nodes, max_children), -1, dtype=torch.long, device=self.device)
+        self.children_count = torch.zeros(n_nodes, dtype=torch.long, device=self.device)
+        
+        for node in range(n_nodes):
+            for child_idx, child in enumerate(children_lists[node]):
+                self.children_array[node, child_idx] = child
+                self.children_count[node] += 1
+        
+        # Pre-compute spatial inertias for ALL links (batched)
+        self.spatial_inertias = self._precompute_all_spatial_inertias(n_nodes)
+
+    def _precompute_all_spatial_inertias(self, n_nodes: int) -> torch.Tensor:
+        """Pre-compute spatial inertia for all links in one batched operation."""
+        def skew_symmetric(v: torch.Tensor) -> torch.Tensor:
+            """Compute skew-symmetric matrix from 3D vector."""
+            x, y, z = v[..., 0], v[..., 1], v[..., 2]
+            zeros = torch.zeros_like(x)
+            return torch.stack([
+                torch.stack([zeros, -z, y], dim=-1),
+                torch.stack([z, zeros, -x], dim=-1),
+                torch.stack([-y, x, zeros], dim=-1),
+            ], dim=-2)
+        
+        I_spatial = torch.zeros((n_nodes, 6, 6), dtype=self.dtype, device=self.device)
+        
+        for node_idx in range(n_nodes):
+            frame_name = self.idx_to_frame[node_idx]
+            frame_obj = self.find_frame(frame_name)
+            link = frame_obj.link
+            inertial = getattr(link, 'inertial', None)
+            
+            if inertial is None:
+                continue
+                
+            offset_transform, mass, inertia_tensor = inertial
+            
+            # Extract COM pose
+            if offset_transform is None:
+                R = torch.eye(3, dtype=self.dtype, device=self.device)
+                com_pos = torch.zeros(3, dtype=self.dtype, device=self.device)
+            else:
+                T = offset_transform.get_matrix()
+                # Ensure T is 2D (4x4) by squeezing any batch dimensions
+                if T.ndim > 2:
+                    T = T.squeeze()
+                T = T.to(dtype=self.dtype, device=self.device)
+                R = T[:3, :3].clone()  # Extract rotation, ensure contiguous
+                com_pos = T[:3, 3].clone()  # Extract position
+            
+            # Convert mass to tensor ONCE
+            if torch.is_tensor(mass):
+                m = mass.to(dtype=self.dtype, device=self.device)
+            else:
+                m = torch.tensor(mass, dtype=self.dtype, device=self.device)
+            
+            # Rotational inertia
+            if inertia_tensor is None:
+                I_rot = torch.zeros((3, 3), dtype=self.dtype, device=self.device)
+            else:
+                I_rot = inertia_tensor.clone()
+                # Ensure I_rot is 2D (3x3)
+                if I_rot.ndim > 2:
+                    I_rot = I_rot.squeeze()
+                I_rot = I_rot.to(dtype=self.dtype, device=self.device)
+                # Rotate to link frame
+                I_rot = R @ I_rot @ R.transpose(-2, -1)
+            
+            # Build spatial inertia
+            I3 = torch.eye(3, dtype=self.dtype, device=self.device)
+            com_skew = skew_symmetric(com_pos.unsqueeze(0)).squeeze(0)
+            
+            I_spatial[node_idx, :3, :3] = m * I3
+            I_spatial[node_idx, :3, 3:] = -m * com_skew
+            I_spatial[node_idx, 3:, :3] = m * com_skew
+            I_spatial[node_idx, 3:, 3:] = I_rot - m * (com_skew @ com_skew)
+        
+        return I_spatial
 
     def to(
         self,
@@ -173,6 +271,11 @@ class Chain:
         ]
         self.low = self.low.to(dtype=self.dtype, device=self.device)
         self.high = self.high.to(dtype=self.dtype, device=self.device)
+        self.parent_array = self.parent_array.to(device=self.device)
+        self.children_array = self.children_array.to(device=self.device)
+        self.children_count = self.children_count.to(device=self.device)
+        self.spatial_inertias = self.spatial_inertias.to(dtype=self.dtype, device=self.device)
+        
         return self
 
     @property

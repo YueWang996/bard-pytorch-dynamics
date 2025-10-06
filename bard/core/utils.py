@@ -236,7 +236,9 @@ def compute_spatial_inertia(
     link,
     batch: int,
     dtype: torch.dtype,
-    device: torch.device
+    device: torch.device,
+    node_idx: Optional[int] = None,
+    chain = None,
 ) -> torch.Tensor:
     """
     Compute 6×6 spatial inertia matrix from link properties.
@@ -256,6 +258,11 @@ def compute_spatial_inertia(
     Returns:
         Spatial inertia matrix (B, 6, 6)
     """
+    if chain is not None and node_idx is not None:
+        # Use pre-computed spatial inertia from chain
+        I_base = chain.spatial_inertias[node_idx]
+        return I_base.unsqueeze(0).expand(batch, -1, -1)
+    
     I_spatial = torch.zeros((batch, 6, 6), dtype=dtype, device=device)
     
     inertial = getattr(link, 'inertial', None)
@@ -414,18 +421,13 @@ def build_parent_children(chain) -> Tuple[List[int], List[List[int]]]:
             - parent_list[i] is the parent index of node i (-1 for root)
             - children_list[i] is list of child indices of node i
     """
-    n_nodes = len(chain.joint_indices)
-    parent = [-1] * n_nodes
-    children: List[List[int]] = [[] for _ in range(n_nodes)]
+    parent = chain.parent_array.cpu().tolist()
     
-    for node in range(n_nodes):
-        path = chain.parents_indices[node]
-        if len(path) > 1:
-            p = int(path[-2])
-            parent[node] = p
-            children[p].append(node)
-        else:
-            parent[node] = -1
+    children = []
+    for i in range(len(parent)):
+        count = int(chain.children_count[i].item())
+        child_list = chain.children_array[i, :count].cpu().tolist()
+        children.append(child_list)
             
     return parent, children
 
