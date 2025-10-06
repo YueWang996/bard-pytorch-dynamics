@@ -195,6 +195,7 @@ def end_effector_acceleration(
         chain.children_array[i, :chain.children_count[i]].tolist() 
         for i in range(n_nodes)
     ]
+    topo_order = chain.topo_order  # Pre-computed topological order
     
     # Resolve frame index
     node_idx = chain.get_frame_indices(frame_name).item() if isinstance(frame_name, str) else int(frame_name)
@@ -206,7 +207,7 @@ def end_effector_acceleration(
     
     return _end_effector_acceleration_compiled(
         chain, q, qd, qdd, node_idx, reference_frame,
-        parent, children, joint_indices, joint_type_indices, axes
+        parent, children, topo_order, joint_indices, joint_type_indices, axes
     )
 
 
@@ -220,6 +221,7 @@ def _end_effector_acceleration_compiled(
     reference_frame: str,
     parent: List[int],
     children: List[List[int]],
+    topo_order: List[int],  # Pre-computed, no while loop needed!
     joint_indices: torch.Tensor,
     joint_type_indices: torch.Tensor,
     axes: torch.Tensor,
@@ -256,15 +258,8 @@ def _end_effector_acceleration_compiled(
     # World spatial acceleration (gravity disabled)
     a_world0 = torch.zeros((B, 6), dtype=dtype, device=device)
 
-    # Tree topology
+    # Tree topology - USE PRE-COMPUTED ORDER (no while loop!)
     n_nodes = len(parent)
-    base_nodes = [i for i, p in enumerate(parent) if p == -1]
-    topo = []
-    stack = base_nodes[:]
-    while stack:
-        i = stack.pop(0)
-        topo.append(i)
-        stack.extend(children[i])
 
     # Precompute joint transforms
     axes_raw = axes.to(dtype=dtype, device=device)
@@ -305,8 +300,8 @@ def _end_effector_acceleration_compiled(
     else:
         T_world_to_base = I44
 
-    # Forward pass
-    for i in topo:
+    # Forward pass - USE PRE-COMPUTED TOPOLOGICAL ORDER
+    for i in topo_order:
         j_idx = joint_indices[i]
         j_type = joint_type_indices[i]
 

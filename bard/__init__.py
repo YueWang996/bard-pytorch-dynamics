@@ -6,7 +6,7 @@ kinematics and dynamics algorithms with support for batch processing.
 """
 
 __version__ = "0.1.0"
-__author__ = "Your Name"
+__author__ = "Yue Wang"
 
 from .core.chain import Chain
 from .core.kinematics import calc_forward_kinematics, end_effector_acceleration
