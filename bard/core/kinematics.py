@@ -1,5 +1,5 @@
 import torch
-import pytorch_kinematics.transforms as tf
+import bard.transforms as tf
 from bard.core import chain
 from bard.structures import Joint
 from bard.transforms import (
@@ -19,6 +19,7 @@ from .utils import (
 )
 
 
+@torch.compile
 def calc_forward_kinematics(
     chain: chain.Chain,
     q: torch.Tensor,
@@ -139,6 +140,7 @@ def calc_forward_kinematics(
     # ---- return WORLD pose of the requested frame ----
     return tf.Transform3d(matrix=T)
 
+@torch.compile
 def end_effector_acceleration(
     chain,
     q: torch.Tensor,

@@ -10,7 +10,7 @@ from .urdf_parser_py.urdf import URDF, Mesh, Cylinder, Box, Sphere
 from bard.structures import Frame, Joint, Link, Visual
 from bard.core import chain
 import torch
-import pytorch_kinematics.transforms as tf
+import bard.transforms as tf
 
 
 JOINT_TYPE_MAP = {

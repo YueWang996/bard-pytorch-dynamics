@@ -2,8 +2,8 @@
 
 from typing import List, Optional
 import torch
-import pytorch_kinematics.transforms as tf
-from pytorch_kinematics.transforms import axis_and_angle_to_matrix_33
+import bard.transforms as tf
+from bard.transforms import axis_and_angle_to_matrix_33
 
 from .joint import Joint
 from .link import Link

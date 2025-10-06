@@ -29,7 +29,7 @@ from .utils import (
     base_pose_to_transform,
 )
 
-
+@torch.compile
 def calc_inverse_dynamics(
     chain: chain.Chain,
     q: torch.Tensor,
@@ -262,6 +262,7 @@ def calc_inverse_dynamics(
     return tau
 
 
+@torch.compile
 def crba_inertia_matrix(
     chain: chain.Chain,
     q: torch.Tensor

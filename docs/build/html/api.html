@@ -1,0 +1,1200 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>API Reference &#8212; bard  documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="_static/alabaster.css?v=27fed22d" />
+    <script src="_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="_static/doctools.js?v=9bcbadda"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="prev" title="Quick Start" href="quickstart.html" />
+   
+  <link rel="stylesheet" href="_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="api-reference">
+<h1>API Reference<a class="headerlink" href="#api-reference" title="Link to this heading">¶</a></h1>
+<p>This page provides the auto-generated API documentation for the core modules in <code class="docutils literal notranslate"><span class="pre">bard</span></code>.</p>
+<section id="module-bard.parsers.urdf">
+<span id="urdf-parsing"></span><h2>URDF Parsing<a class="headerlink" href="#module-bard.parsers.urdf" title="Link to this heading">¶</a></h2>
+<p>URDF parser for building a <cite>bard</cite> kinematic Chain.</p>
+<p>This module provides the <cite>build_chain_from_urdf</cite> function, which serves as the
+primary entry point for creating a robot model from a URDF file’s content. It
+handles parsing of links, joints, and inertial properties, and supports the
+creation of both fixed-base and floating-base robot representations.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="bard.parsers.urdf.build_chain_from_urdf">
+<span class="sig-prename descclassname"><span class="pre">bard.parsers.urdf.</span></span><span class="sig-name descname"><span class="pre">build_chain_from_urdf</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">data</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">floating_base</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">base_frame_name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'floating_base'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">torch.float32</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'cpu'</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.parsers.urdf.build_chain_from_urdf" title="Link to this definition">¶</a></dt>
+<dd><p>Builds a <cite>bard</cite> Chain object from a URDF data string.</p>
+<p>This is the main entry point for creating a kinematic chain from a URDF.
+It parses the XML data, constructs the kinematic tree, and can optionally
+prepend a 6-DOF floating base for models like quadrupeds or humanoids.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>data</strong> (<em>str</em><em> or </em><em>bytes</em>) – The URDF XML content as a string or bytes.</p></li>
+<li><p><strong>floating_base</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True, a 6-DOF floating base is
+prepended to the root of the kinematic tree. Defaults to False.</p></li>
+<li><p><strong>base_frame_name</strong> (<em>str</em><em>, </em><em>optional</em>) – The name assigned to the synthetic base
+frame when <cite>floating_base</cite> is True. Defaults to “floating_base”.</p></li>
+<li><p><strong>dtype</strong> (<em>torch.dtype</em><em>, </em><em>optional</em>) – The PyTorch data type to use for the
+chain’s tensors. Defaults to torch.float32.</p></li>
+<li><p><strong>device</strong> (<em>str</em><em> or </em><em>torch.device</em><em>, </em><em>optional</em>) – The PyTorch device to place the
+chain’s tensors on. Defaults to “cpu”.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><dl class="simple">
+<dt>The constructed kinematic chain object. The configuration</dt><dd><p>vector <cite>q</cite> will have the following format:
+- <strong>Fixed-base</strong>: <cite>q = [joint_angle_1, …]</cite>
+- <strong>Floating-base</strong>: <cite>q = [tx, ty, tz, qw, qx, qy, qz, joint_angle_1, …]</cite></p>
+</dd>
+</dl>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#bard.core.chain.Chain" title="bard.core.chain.Chain">bard.core.chain.Chain</a></p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>ValueError</strong> – If a root link cannot be determined from the URDF structure.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="module-bard.core.kinematics">
+<span id="kinematics"></span><h2>Kinematics<a class="headerlink" href="#module-bard.core.kinematics" title="Link to this heading">¶</a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="bard.core.kinematics.calc_forward_kinematics">
+<span class="sig-prename descclassname"><span class="pre">bard.core.kinematics.</span></span><span class="sig-name descname"><span class="pre">calc_forward_kinematics</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">chain</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">q</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">frame_id</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.core.kinematics.calc_forward_kinematics" title="Link to this definition">¶</a></dt>
+<dd><p>Calculates the forward kinematics for a specific frame.</p>
+<p>This function computes the world pose of a single target frame given the
+robot’s generalized coordinates. It supports batching for parallel computation.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>chain</strong> (<a class="reference internal" href="#bard.core.chain.Chain" title="bard.core.chain.Chain"><em>bard.core.chain.Chain</em></a>) – The robot chain object.</p></li>
+<li><p><strong>q</strong> (<em>torch.Tensor</em>) – The generalized coordinates of the robot.
+Shape (B, nq) or (nq,), where B is the batch size and nq is the
+number of configuration variables.</p></li>
+<li><p><strong>frame_id</strong> (<em>int</em>) – The integer index of the target frame.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><dl class="simple">
+<dt>A Transform3d object containing the</dt><dd><p>batched (B, 4, 4) homogeneous transformation matrices representing
+the world pose of the frame.</p>
+</dd>
+</dl>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bard.transforms.Transform3d</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="bard.core.kinematics.end_effector_acceleration">
+<span class="sig-prename descclassname"><span class="pre">bard.core.kinematics.</span></span><span class="sig-name descname"><span class="pre">end_effector_acceleration</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">chain</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">q</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">qd</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">qdd</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">frame_name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">reference_frame</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'local'</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.core.kinematics.end_effector_acceleration" title="Link to this definition">¶</a></dt>
+<dd><p>Computes the classical spatial acceleration of a frame.</p>
+<p>This function implements the forward pass of the Recursive Newton-Euler
+Algorithm (RNEA) to determine the acceleration of a body, including
+Coriolis and centrifugal effects.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>chain</strong> (<a class="reference internal" href="#bard.core.chain.Chain" title="bard.core.chain.Chain"><em>bard.core.chain.Chain</em></a>) – The robot chain object.</p></li>
+<li><p><strong>q</strong> (<em>torch.Tensor</em>) – Generalized coordinates (position). Shape (B, nq) or (nq,).</p></li>
+<li><p><strong>qd</strong> (<em>torch.Tensor</em>) – Generalized velocities. Shape (B, nv) or (nv,).</p></li>
+<li><p><strong>qdd</strong> (<em>torch.Tensor</em>) – Generalized accelerations. Shape (B, nv) or (nv,).</p></li>
+<li><p><strong>frame_name</strong> (<em>Union</em><em>[</em><em>str</em><em>, </em><em>int</em><em>]</em>) – The name or integer index of the target frame.</p></li>
+<li><p><strong>reference_frame</strong> (<em>str</em><em>, </em><em>optional</em>) – The frame of reference for the output
+acceleration. Can be “world” or “local”. Defaults to “local”.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><dl class="simple">
+<dt>The spatial acceleration vector [linear; angular] of</dt><dd><p>shape (B, 6).</p>
+</dd>
+</dl>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>torch.Tensor</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function" id="module-bard.core.jacobian">
+<dt class="sig sig-object py" id="bard.core.jacobian.calc_jacobian">
+<span class="sig-prename descclassname"><span class="pre">bard.core.jacobian.</span></span><span class="sig-name descname"><span class="pre">calc_jacobian</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">chain</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">q</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">frame_id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">reference_frame</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'world'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">return_eef_pose</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.core.jacobian.calc_jacobian" title="Link to this definition">¶</a></dt>
+<dd><p>Calculates the kinematic Jacobian for a specific frame.</p>
+<p>This function computes the geometric Jacobian, which maps joint velocities to
+the spatial velocity (twist) of a given frame. It supports both fixed-base
+and floating-base robots using a Product of Exponentials (PoE) formulation.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>chain</strong> (<a class="reference internal" href="#bard.core.chain.Chain" title="bard.core.chain.Chain"><em>bard.core.chain.Chain</em></a>) – The robot chain object.</p></li>
+<li><p><strong>q</strong> (<em>torch.Tensor</em>) – The generalized coordinates of the robot. For fixed-base
+robots, shape is (B, n_joints) or (n_joints,). For floating-base
+robots, shape is (B, 7 + n_joints) or (7 + n_joints,).</p></li>
+<li><p><strong>frame_id</strong> (<em>Union</em><em>[</em><em>int</em><em>, </em><em>str</em><em>]</em>) – The integer index or name of the target frame.</p></li>
+<li><p><strong>reference_frame</strong> (<em>str</em><em>, </em><em>optional</em>) – The frame of reference for the output
+Jacobian. Can be “world” or “local”. Defaults to “world”.</p></li>
+<li><p><strong>return_eef_pose</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True, also returns the world
+pose of the target frame. Defaults to False.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p>The Jacobian matrix of shape (B, 6, nv), where nv is the number
+of velocity variables.</p></li>
+<li><p>If <cite>return_eef_pose</cite> is True, a tuple containing the Jacobian
+and the (B, 4, 4) pose matrix of the frame.</p></li>
+</ul>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>torch.Tensor or tuple[torch.Tensor, torch.Tensor]</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="module-bard.core.dynamics">
+<span id="dynamics"></span><h2>Dynamics<a class="headerlink" href="#module-bard.core.dynamics" title="Link to this heading">¶</a></h2>
+<p>Robot dynamics algorithms for inverse dynamics and mass matrix computation.</p>
+<p>This module implements:
+- Recursive Newton-Euler Algorithm (RNEA) for inverse dynamics
+- Composite Rigid Body Algorithm (CRBA) for mass matrix
+Both algorithms support tree-structured robots with optional floating bases.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="bard.core.dynamics.calc_inverse_dynamics">
+<span class="sig-prename descclassname"><span class="pre">bard.core.dynamics.</span></span><span class="sig-name descname"><span class="pre">calc_inverse_dynamics</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">chain</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">q</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">qd</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">qdd</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">gravity</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.core.dynamics.calc_inverse_dynamics" title="Link to this definition">¶</a></dt>
+<dd><p>Compute generalized forces via Recursive Newton-Euler Algorithm (RNEA).</p>
+<p>Solves the inverse dynamics problem: given configuration, velocities, and
+accelerations, compute the required forces/torques. Supports both fixed-base
+and floating-base robots with tree structures.</p>
+<dl class="simple">
+<dt>Algorithm Overview:</dt><dd><ol class="arabic simple">
+<li><p>Forward pass: Propagate velocities and accelerations from base to leaves</p></li>
+<li><p>Backward pass: Propagate forces from leaves to base</p></li>
+</ol>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>chain</strong> (<span class="sphinx_autodoc_typehints-type"><a class="reference internal" href="#bard.core.chain.Chain" title="bard.core.chain.Chain"><code class="xref py py-class docutils literal notranslate"><span class="pre">Chain</span></code></a></span>) – Robot kinematic chain</p></li>
+<li><p><strong>q</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">Tensor</span></code></span>) – Generalized positions
+- Fixed-base: (B, n_joints) or (n_joints,)
+- Floating-base: (B, 7+n_joints) or (7+n_joints,)</p></li>
+<li><p><strong>qd</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">Tensor</span></code></span>) – Generalized velocities
+- Fixed-base: (B, n_joints) or (n_joints,)
+- Floating-base: (B, 6+n_joints) or (6+n_joints,)</p></li>
+<li><p><strong>qdd</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">Tensor</span></code></span>) – Generalized accelerations (same shape as qd)</p></li>
+<li><p><strong>gravity</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-data docutils literal notranslate"><span class="pre">Optional</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">Tensor</span></code>]</span>) – Gravity vector (3,) in world frame, default [0, 0, -9.81]</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p>Fixed-base: (B, n_joints) joint torques/forces</p></li>
+<li><p>Floating-base: (B, 6+n_joints) where first 6 are base wrench</p></li>
+</ul>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Generalized forces tau</p>
+</dd>
+</dl>
+<p class="rubric">Example</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">tau</span> <span class="o">=</span> <span class="n">calc_inverse_dynamics</span><span class="p">(</span><span class="n">chain</span><span class="p">,</span> <span class="n">q</span><span class="p">,</span> <span class="n">qd</span><span class="p">,</span> <span class="n">qdd</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="c1"># For robot with 7 joints: tau.shape == (batch_size, 7)</span>
+</pre></div>
+</div>
+<p class="rubric">References</p>
+<p>Featherstone, R. (2008). Rigid Body Dynamics Algorithms.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="bard.core.dynamics.crba_inertia_matrix">
+<span class="sig-prename descclassname"><span class="pre">bard.core.dynamics.</span></span><span class="sig-name descname"><span class="pre">crba_inertia_matrix</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">chain</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">q</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.core.dynamics.crba_inertia_matrix" title="Link to this definition">¶</a></dt>
+<dd><p>Compute mass matrix via Composite Rigid Body Algorithm (CRBA).</p>
+<dl class="simple">
+<dt>Computes the symmetric positive-definite mass matrix M(q) where:</dt><dd><p>M(q) * qdd = tau - C(q, qd) - G(q)</p>
+</dd>
+</dl>
+<p>The mass matrix relates generalized accelerations to forces/torques.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>chain</strong> (<span class="sphinx_autodoc_typehints-type"><a class="reference internal" href="#bard.core.chain.Chain" title="bard.core.chain.Chain"><code class="xref py py-class docutils literal notranslate"><span class="pre">Chain</span></code></a></span>) – Robot kinematic chain</p></li>
+<li><p><strong>q</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">Tensor</span></code></span>) – Generalized positions
+- Fixed-base: (B, n_joints) or (n_joints,)
+- Floating-base: (B, 7+n_joints) or (7+n_joints,)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p>Fixed-base: (B, n_joints, n_joints)</p></li>
+<li><p>Floating-base: (B, 6+n_joints, 6+n_joints)</p></li>
+</ul>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Mass matrix M</p>
+</dd>
+</dl>
+<dl class="simple">
+<dt>Properties:</dt><dd><ul class="simple">
+<li><p>Symmetric: M = M^T</p></li>
+<li><p>Positive definite: x^T M x &gt; 0 for all x ≠ 0</p></li>
+<li><p>Configuration dependent: M = M(q)</p></li>
+</ul>
+</dd>
+</dl>
+<p class="rubric">Example</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">M</span> <span class="o">=</span> <span class="n">crba_inertia_matrix</span><span class="p">(</span><span class="n">chain</span><span class="p">,</span> <span class="n">q</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="c1"># Compute required torque for desired acceleration</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">tau</span> <span class="o">=</span> <span class="n">M</span> <span class="o">@</span> <span class="n">qdd_desired</span>
+</pre></div>
+</div>
+<p class="rubric">References</p>
+<p>Featherstone, R. (2008). Rigid Body Dynamics Algorithms.</p>
+</dd></dl>
+
+</section>
+<section id="module-bard.core.chain">
+<span id="robot-chain"></span><h2>Robot Chain<a class="headerlink" href="#module-bard.core.chain" title="Link to this heading">¶</a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="bard.core.chain.Chain">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">bard.core.chain.</span></span><span class="sig-name descname"><span class="pre">Chain</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">root_frame</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">floating_base</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">base_name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'base'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">torch.float32</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'cpu'</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.core.chain.Chain" title="Link to this definition">¶</a></dt>
+<dd><p>Represents a robot’s kinematic structure as a tree of frames.</p>
+<p>This class is the central object for all kinematics and dynamics calculations.
+It holds the robot’s structure, parsed from a URDF, and provides methods
+for querying frames, joints, and managing data types and devices. It supports
+both fixed-base and floating-base robots for vectorized batch operations.</p>
+<dl>
+<dt>Coordinate Conventions:</dt><dd><dl>
+<dt>Fixed-base robots:</dt><dd><ul class="simple">
+<li><p>q: [joint_angles…] (nq = n_joints)</p></li>
+<li><p>v: [joint_velocities…] (nv = n_joints)</p></li>
+</ul>
+</dd>
+<dt>Floating-base robots:</dt><dd><ul class="simple">
+<li><p>q: [tx, ty, tz, qw, qx, qy, qz, joint_angles…] (nq = 7 + n_joints)</p></li>
+<li><p>v: [vx, vy, vz, wx, wy, wz, joint_velocities…] (nv = 6 + n_joints)</p></li>
+</ul>
+<p>The base orientation is represented by a unit quaternion [qw, qx, qy, qz].</p>
+</dd>
+</dl>
+</dd>
+</dl>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.core.chain.Chain.has_floating_base">
+<span class="sig-name descname"><span class="pre">has_floating_base</span></span><a class="headerlink" href="#bard.core.chain.Chain.has_floating_base" title="Link to this definition">¶</a></dt>
+<dd><p>True if the robot has a 6-DOF floating base.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.core.chain.Chain.nq">
+<span class="sig-name descname"><span class="pre">nq</span></span><a class="headerlink" href="#bard.core.chain.Chain.nq" title="Link to this definition">¶</a></dt>
+<dd><p>The total dimension of the configuration space vector <cite>q</cite>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.core.chain.Chain.nv">
+<span class="sig-name descname"><span class="pre">nv</span></span><a class="headerlink" href="#bard.core.chain.Chain.nv" title="Link to this definition">¶</a></dt>
+<dd><p>The total dimension of the velocity space vector <cite>v</cite>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.core.chain.Chain.n_joints">
+<span class="sig-name descname"><span class="pre">n_joints</span></span><a class="headerlink" href="#bard.core.chain.Chain.n_joints" title="Link to this definition">¶</a></dt>
+<dd><p>The number of actuated (non-fixed) joints.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.core.chain.Chain.dtype">
+<span class="sig-name descname"><span class="pre">dtype</span></span><a class="headerlink" href="#bard.core.chain.Chain.dtype" title="Link to this definition">¶</a></dt>
+<dd><p>The PyTorch data type used for all tensors.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>torch.dtype</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.core.chain.Chain.device">
+<span class="sig-name descname"><span class="pre">device</span></span><a class="headerlink" href="#bard.core.chain.Chain.device" title="Link to this definition">¶</a></dt>
+<dd><p>The PyTorch device (e.g., “cpu” or “cuda”) for all tensors.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>torch.device</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.core.chain.Chain.clamp">
+<span class="sig-name descname"><span class="pre">clamp</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">joint_values</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.core.chain.Chain.clamp" title="Link to this definition">¶</a></dt>
+<dd><p>Clamps joint values to the robot’s defined joint limits.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>joint_values</strong> (<em>torch.Tensor</em>) – A tensor of joint values.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The clamped joint values.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>torch.Tensor</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.core.chain.Chain.ensure_tensor">
+<span class="sig-name descname"><span class="pre">ensure_tensor</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">value</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.core.chain.Chain.ensure_tensor" title="Link to this definition">¶</a></dt>
+<dd><p>Converts various input types to a tensor in the correct joint order.</p>
+<p>This utility handles conversion from numpy arrays, lists, or dictionaries
+(mapping joint names to values) into a torch.Tensor on the chain’s
+device and dtype.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>value</strong> (<em>Union</em><em>[</em><em>torch.Tensor</em><em>, </em><em>np.ndarray</em><em>, </em><em>List</em><em>, </em><em>Dict</em><em>]</em>) – The input value.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The converted tensor.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>torch.Tensor</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><ul class="simple">
+<li><p><strong>ValueError</strong> – If a dictionary input is missing values for some joints.</p></li>
+<li><p><strong>TypeError</strong> – If the input type is not supported.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.core.chain.Chain.find_frame">
+<span class="sig-name descname"><span class="pre">find_frame</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.core.chain.Chain.find_frame" title="Link to this definition">¶</a></dt>
+<dd><p>Finds a Frame object by its name in the kinematic tree.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>name</strong> (<em>str</em>) – The name of the frame to search for.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The Frame object if found, otherwise None.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Optional[<a class="reference internal" href="#bard.structures.frame.Frame" title="bard.structures.frame.Frame">Frame</a>]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.core.chain.Chain.get_frame_indices">
+<span class="sig-name descname"><span class="pre">get_frame_indices</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">frame_names</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.core.chain.Chain.get_frame_indices" title="Link to this definition">¶</a></dt>
+<dd><p>Gets the integer indices for a list of frame names.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>*frame_names</strong> (<em>str</em>) – One or more frame names.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A tensor of integer indices.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>torch.Tensor</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.core.chain.Chain.get_frame_names">
+<span class="sig-name descname"><span class="pre">get_frame_names</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">exclude_fixed</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.core.chain.Chain.get_frame_names" title="Link to this definition">¶</a></dt>
+<dd><p>Returns all frame names in the chain in traversal order.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>exclude_fixed</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True, names of frames associated
+with fixed joints are omitted. Defaults to True.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A list of all frame names.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>List[str]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.core.chain.Chain.get_generalized_coordinate_names">
+<span class="sig-name descname"><span class="pre">get_generalized_coordinate_names</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">include_base</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.core.chain.Chain.get_generalized_coordinate_names" title="Link to this definition">¶</a></dt>
+<dd><p>Returns the ordered names for all configuration variables <cite>q</cite>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>include_base</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True and the chain has a floating
+base, prepends the base coordinate names. Defaults to True.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>An ordered list of coordinate names.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>List[str]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.core.chain.Chain.get_generalized_velocity_names">
+<span class="sig-name descname"><span class="pre">get_generalized_velocity_names</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">include_base</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.core.chain.Chain.get_generalized_velocity_names" title="Link to this definition">¶</a></dt>
+<dd><p>Returns the ordered names for all velocity variables <cite>v</cite>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>include_base</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True and the chain has a floating
+base, prepends the base velocity names. Defaults to True.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>An ordered list of velocity names.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>List[str]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.core.chain.Chain.get_joint_effort_limits">
+<span class="sig-name descname"><span class="pre">get_joint_effort_limits</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#bard.core.chain.Chain.get_joint_effort_limits" title="Link to this definition">¶</a></dt>
+<dd><p>Returns the effort (torque/force) limits (low, high) for all actuated joints.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">tuple</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">List</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code>], <code class="xref py py-class docutils literal notranslate"><span class="pre">List</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code>]]</span></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.core.chain.Chain.get_joint_limits">
+<span class="sig-name descname"><span class="pre">get_joint_limits</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#bard.core.chain.Chain.get_joint_limits" title="Link to this definition">¶</a></dt>
+<dd><p>Returns the position limits (low, high) for all actuated joints.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">tuple</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">List</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code>], <code class="xref py py-class docutils literal notranslate"><span class="pre">List</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code>]]</span></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.core.chain.Chain.get_joint_parameter_names">
+<span class="sig-name descname"><span class="pre">get_joint_parameter_names</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">exclude_fixed</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.core.chain.Chain.get_joint_parameter_names" title="Link to this definition">¶</a></dt>
+<dd><p>Returns the ordered list of actuated joint names.</p>
+<p>This order defines the layout of the joint components in the <cite>q</cite> and <cite>v</cite> vectors.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>exclude_fixed</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True, names of fixed joints are
+omitted. Defaults to True.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>An ordered list of joint names.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>List[str]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.core.chain.Chain.get_joint_velocity_limits">
+<span class="sig-name descname"><span class="pre">get_joint_velocity_limits</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#bard.core.chain.Chain.get_joint_velocity_limits" title="Link to this definition">¶</a></dt>
+<dd><p>Returns the velocity limits (low, high) for all actuated joints.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">tuple</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">List</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code>], <code class="xref py py-class docutils literal notranslate"><span class="pre">List</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code>]]</span></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.core.chain.Chain.get_joints">
+<span class="sig-name descname"><span class="pre">get_joints</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">exclude_fixed</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.core.chain.Chain.get_joints" title="Link to this definition">¶</a></dt>
+<dd><p>Returns all Joint objects in the chain.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>exclude_fixed</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True, fixed joints are omitted
+from the list. Defaults to True.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A list of Joint objects.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>List[<a class="reference internal" href="#bard.structures.joint.Joint" title="bard.structures.joint.Joint">Joint</a>]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="id0">
+<em class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">nq</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></em><a class="headerlink" href="#id0" title="Link to this definition">¶</a></dt>
+<dd><p>Returns the total dimension of the configuration space vector <cite>q</cite>.</p>
+</dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="id1">
+<em class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">nv</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></em><a class="headerlink" href="#id1" title="Link to this definition">¶</a></dt>
+<dd><p>Returns the total dimension of the velocity space vector <cite>v</cite>.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.core.chain.Chain.pack_q">
+<span class="sig-name descname"><span class="pre">pack_q</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">q_base</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">q_joints</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.core.chain.Chain.pack_q" title="Link to this definition">¶</a></dt>
+<dd><p>Combines base and joint positions into a single <cite>q</cite> vector.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>q_base</strong> (<em>Optional</em><em>[</em><em>torch.Tensor</em><em>]</em>) – Base position [tx,ty,tz,qw,qx,qy,qz] or None.</p></li>
+<li><p><strong>q_joints</strong> (<em>torch.Tensor</em>) – Joint positions.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The full generalized coordinate vector <cite>q</cite>.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>torch.Tensor</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.core.chain.Chain.pack_v">
+<span class="sig-name descname"><span class="pre">pack_v</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">v_base</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">v_joints</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.core.chain.Chain.pack_v" title="Link to this definition">¶</a></dt>
+<dd><p>Combines base and joint velocities into a single <cite>v</cite> vector.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>v_base</strong> (<em>Optional</em><em>[</em><em>torch.Tensor</em><em>]</em>) – Base velocity [vx,vy,vz,wx,wy,wz] or None.</p></li>
+<li><p><strong>v_joints</strong> (<em>torch.Tensor</em>) – Joint velocities.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The full generalized velocity vector <cite>v</cite>.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>torch.Tensor</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.core.chain.Chain.to">
+<span class="sig-name descname"><span class="pre">to</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">dtype</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.core.chain.Chain.to" title="Link to this definition">¶</a></dt>
+<dd><p>Moves all tensors in the chain to the specified dtype and/or device.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>dtype</strong> (<em>Optional</em><em>[</em><em>torch.dtype</em><em>]</em><em>, </em><em>optional</em>) – The target PyTorch data type.
+If None, the current dtype is maintained. Defaults to None.</p></li>
+<li><p><strong>device</strong> (<em>Optional</em><em>[</em><em>Union</em><em>[</em><em>str</em><em>, </em><em>torch.device</em><em>]</em><em>]</em><em>, </em><em>optional</em>) – The target
+PyTorch device. If None, the current device is maintained. Defaults to None.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Returns self for method chaining.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#bard.core.chain.Chain" title="bard.core.chain.Chain">Chain</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.core.chain.Chain.unpack_q">
+<span class="sig-name descname"><span class="pre">unpack_q</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">q</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.core.chain.Chain.unpack_q" title="Link to this definition">¶</a></dt>
+<dd><p>Splits generalized coordinates <cite>q</cite> into base and joint components.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>q</strong> (<em>torch.Tensor</em>) – Generalized coordinates of shape (…, nq).</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A tuple <cite>(q_base, q_joints)</cite>.
+<cite>q_base</cite> is None for fixed-base robots.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>tuple[Optional[torch.Tensor], torch.Tensor]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.core.chain.Chain.unpack_v">
+<span class="sig-name descname"><span class="pre">unpack_v</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">v</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.core.chain.Chain.unpack_v" title="Link to this definition">¶</a></dt>
+<dd><p>Splits generalized velocities <cite>v</cite> into base and joint components.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>v</strong> (<em>torch.Tensor</em>) – Generalized velocities of shape (…, nv).</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A tuple <cite>(v_base, v_joints)</cite>.
+<cite>v_base</cite> is None for fixed-base robots.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>tuple[Optional[torch.Tensor], torch.Tensor]</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+<section id="module-bard.structures.frame">
+<span id="data-structures"></span><h2>Data Structures<a class="headerlink" href="#module-bard.structures.frame" title="Link to this heading">¶</a></h2>
+<p>Frame representation for kinematic tree nodes.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="bard.structures.frame.Frame">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">bard.structures.frame.</span></span><span class="sig-name descname"><span class="pre">Frame</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">link</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">joint</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">children</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.structures.frame.Frame" title="Link to this definition">¶</a></dt>
+<dd><p>A node in the robot kinematic tree, containing joint and link information.</p>
+<p>A frame represents a coordinate system attached to a part of the robot.
+The kinematic tree is built by connecting these frames in parent-child
+relationships, forming a chain from the root to the end-effectors.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.structures.frame.Frame.name">
+<span class="sig-name descname"><span class="pre">name</span></span><a class="headerlink" href="#bard.structures.frame.Frame.name" title="Link to this definition">¶</a></dt>
+<dd><p>The unique identifier for this frame.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.structures.frame.Frame.link">
+<span class="sig-name descname"><span class="pre">link</span></span><a class="headerlink" href="#bard.structures.frame.Frame.link" title="Link to this definition">¶</a></dt>
+<dd><p>The link object associated with this frame, containing
+physical properties like mass and inertia.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#bard.structures.link.Link" title="bard.structures.link.Link">Link</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.structures.frame.Frame.joint">
+<span class="sig-name descname"><span class="pre">joint</span></span><a class="headerlink" href="#bard.structures.frame.Frame.joint" title="Link to this definition">¶</a></dt>
+<dd><p>The joint that connects this frame to its parent,
+defining the motion between them.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#bard.structures.joint.Joint" title="bard.structures.joint.Joint">Joint</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.structures.frame.Frame.children">
+<span class="sig-name descname"><span class="pre">children</span></span><a class="headerlink" href="#bard.structures.frame.Frame.children" title="Link to this definition">¶</a></dt>
+<dd><p>A list of child frames attached to this frame.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>List[<a class="reference internal" href="#bard.structures.frame.Frame" title="bard.structures.frame.Frame">Frame</a>]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.structures.frame.Frame.add_child">
+<span class="sig-name descname"><span class="pre">add_child</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">child</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.structures.frame.Frame.add_child" title="Link to this definition">¶</a></dt>
+<dd><p>Adds a child frame to this frame’s list of children.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>child</strong> (<a class="reference internal" href="#bard.structures.frame.Frame" title="bard.structures.frame.Frame"><em>Frame</em></a>) – The child frame to add.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><span class="sphinx_autodoc_typehints-type"><code class="xref py py-obj docutils literal notranslate"><span class="pre">None</span></code></span></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.structures.frame.Frame.count_joints">
+<span class="sig-name descname"><span class="pre">count_joints</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">exclude_fixed</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.structures.frame.Frame.count_joints" title="Link to this definition">¶</a></dt>
+<dd><p>Counts the number of joints in the subtree starting from this frame.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>exclude_fixed</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True, fixed joints are not
+counted. Defaults to True.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The total number of joints.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.structures.frame.Frame.find_by_name">
+<span class="sig-name descname"><span class="pre">find_by_name</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">target_name</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.structures.frame.Frame.find_by_name" title="Link to this definition">¶</a></dt>
+<dd><p>Finds a frame by name within this frame’s subtree.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>target_name</strong> (<em>str</em>) – The name of the frame to find.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The Frame object if found, otherwise None.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Optional[‘Frame’]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.structures.frame.Frame.get_all_frames">
+<span class="sig-name descname"><span class="pre">get_all_frames</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#bard.structures.frame.Frame.get_all_frames" title="Link to this definition">¶</a></dt>
+<dd><p>Returns a list of all frames in the subtree starting from this frame.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>A list of all frames in depth-first order.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>List[<a class="reference internal" href="#bard.structures.frame.Frame" title="bard.structures.frame.Frame">Frame</a>]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.structures.frame.Frame.get_transform">
+<span class="sig-name descname"><span class="pre">get_transform</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">theta</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.structures.frame.Frame.get_transform" title="Link to this definition">¶</a></dt>
+<dd><p>Computes the transformation for the joint associated with this frame.</p>
+<p>This transform represents the motion of the joint given a joint angle <cite>theta</cite>.
+It is composed with the joint’s static offset.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>theta</strong> (<em>torch.Tensor</em>) – The joint position(s). Can be a scalar or a
+batched tensor of shape (B,).</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A Transform3d object representing the batched joint motion.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>tf.Transform3d</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.structures.frame.Frame.is_end_effector">
+<span class="sig-name descname"><span class="pre">is_end_effector</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#bard.structures.frame.Frame.is_end_effector" title="Link to this definition">¶</a></dt>
+<dd><p>Checks if this frame is a leaf node in the kinematic tree.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>True if the frame has no children, otherwise False.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.structures.frame.Frame.to">
+<span class="sig-name descname"><span class="pre">to</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">dtype</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.structures.frame.Frame.to" title="Link to this definition">¶</a></dt>
+<dd><p>Moves all tensor data in the frame and its children to a specified device/dtype.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>dtype</strong> (<em>Optional</em><em>[</em><em>torch.dtype</em><em>]</em><em>, </em><em>optional</em>) – The target data type. Defaults to None.</p></li>
+<li><p><strong>device</strong> (<em>Optional</em><em>[</em><em>torch.device</em><em>]</em><em>, </em><em>optional</em>) – The target device. Defaults to None.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Returns self for method chaining.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#bard.structures.frame.Frame" title="bard.structures.frame.Frame">Frame</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<p id="module-bard.structures.joint">Joint representation for robot kinematic chains.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="bard.structures.joint.Joint">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">bard.structures.joint.</span></span><span class="sig-name descname"><span class="pre">Joint</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">offset</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">joint_type</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'fixed'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">axis</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">(0.0,</span> <span class="pre">0.0,</span> <span class="pre">1.0)</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">torch.float32</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'cpu'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limits</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">velocity_limits</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">effort_limits</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.structures.joint.Joint" title="Link to this definition">¶</a></dt>
+<dd><p>Represents a robot joint, defining the motion between two links.</p>
+<p>This class stores the properties of a single joint, such as its type (revolute,
+prismatic, fixed), axis of motion, and physical limits.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.structures.joint.Joint.name">
+<span class="sig-name descname"><span class="pre">name</span></span><a class="headerlink" href="#bard.structures.joint.Joint.name" title="Link to this definition">¶</a></dt>
+<dd><p>The unique identifier for the joint.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.structures.joint.Joint.offset">
+<span class="sig-name descname"><span class="pre">offset</span></span><a class="headerlink" href="#bard.structures.joint.Joint.offset" title="Link to this definition">¶</a></dt>
+<dd><p>The static transform from the parent link’s frame
+to the joint’s frame.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Transform3d</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.structures.joint.Joint.joint_type">
+<span class="sig-name descname"><span class="pre">joint_type</span></span><a class="headerlink" href="#bard.structures.joint.Joint.joint_type" title="Link to this definition">¶</a></dt>
+<dd><p>The type of joint, one of ‘fixed’, ‘revolute’, ‘prismatic’.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.structures.joint.Joint.axis">
+<span class="sig-name descname"><span class="pre">axis</span></span><a class="headerlink" href="#bard.structures.joint.Joint.axis" title="Link to this definition">¶</a></dt>
+<dd><p>A 3D unit vector representing the axis of motion in the
+joint’s own frame.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>torch.Tensor</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.structures.joint.Joint.limits">
+<span class="sig-name descname"><span class="pre">limits</span></span><a class="headerlink" href="#bard.structures.joint.Joint.limits" title="Link to this definition">¶</a></dt>
+<dd><p>A tuple of (lower, upper)
+position limits in radians or meters. None if unbounded.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Optional[Tuple[float, float]]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.structures.joint.Joint.velocity_limits">
+<span class="sig-name descname"><span class="pre">velocity_limits</span></span><a class="headerlink" href="#bard.structures.joint.Joint.velocity_limits" title="Link to this definition">¶</a></dt>
+<dd><p>A tuple of (lower, upper)
+velocity limits. None if unbounded.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Optional[Tuple[float, float]]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.structures.joint.Joint.effort_limits">
+<span class="sig-name descname"><span class="pre">effort_limits</span></span><a class="headerlink" href="#bard.structures.joint.Joint.effort_limits" title="Link to this definition">¶</a></dt>
+<dd><p>A tuple of (lower, upper)
+force or torque limits. None if unbounded.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Optional[Tuple[float, float]]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.structures.joint.Joint.clamp">
+<span class="sig-name descname"><span class="pre">clamp</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">joint_position</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.structures.joint.Joint.clamp" title="Link to this definition">¶</a></dt>
+<dd><p>Clamps a given joint position to the joint’s defined limits.</p>
+<p>If the joint has no limits, the input position is returned unchanged.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>joint_position</strong> (<em>torch.Tensor</em>) – The current joint position(s) to clamp.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The clamped joint position(s).</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>torch.Tensor</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.structures.joint.Joint.to">
+<span class="sig-name descname"><span class="pre">to</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">dtype</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.structures.joint.Joint.to" title="Link to this definition">¶</a></dt>
+<dd><p>Moves all tensor data in the joint to a specified device/dtype.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>dtype</strong> (<em>Optional</em><em>[</em><em>torch.dtype</em><em>]</em><em>, </em><em>optional</em>) – The target data type.</p></li>
+<li><p><strong>device</strong> (<em>Optional</em><em>[</em><em>torch.device</em><em>]</em><em>, </em><em>optional</em>) – The target device.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Returns self for method chaining.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#bard.structures.joint.Joint" title="bard.structures.joint.Joint">Joint</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<p id="module-bard.structures.link">Robot link representation with inertial and visual properties.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="bard.structures.link.Link">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">bard.structures.link.</span></span><span class="sig-name descname"><span class="pre">Link</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">offset</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">inertial</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">visuals</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">()</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.structures.link.Link" title="Link to this definition">¶</a></dt>
+<dd><p>Represents a rigid body in the robot’s kinematic chain.</p>
+<p>A link holds the physical properties of a robot segment, including its
+mass, inertia, and visual geometries for rendering.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.structures.link.Link.name">
+<span class="sig-name descname"><span class="pre">name</span></span><a class="headerlink" href="#bard.structures.link.Link.name" title="Link to this definition">¶</a></dt>
+<dd><p>The unique identifier for the link.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.structures.link.Link.offset">
+<span class="sig-name descname"><span class="pre">offset</span></span><a class="headerlink" href="#bard.structures.link.Link.offset" title="Link to this definition">¶</a></dt>
+<dd><p>The static transform from the parent joint frame to
+this link’s reference frame.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Transform3d</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.structures.link.Link.inertial">
+<span class="sig-name descname"><span class="pre">inertial</span></span><a class="headerlink" href="#bard.structures.link.Link.inertial" title="Link to this definition">¶</a></dt>
+<dd><p>A tuple
+containing the link’s inertial properties: (Center of Mass offset,
+mass, 3x3 inertia tensor). None for massless links.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Optional[Tuple[object, float, torch.Tensor]]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.structures.link.Link.visuals">
+<span class="sig-name descname"><span class="pre">visuals</span></span><a class="headerlink" href="#bard.structures.link.Link.visuals" title="Link to this definition">¶</a></dt>
+<dd><p>A list of Visual objects for rendering.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>List[<a class="reference internal" href="#bard.structures.visual.Visual" title="bard.structures.visual.Visual">Visual</a>]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bard.structures.link.Link.to">
+<span class="sig-name descname"><span class="pre">to</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">dtype</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.structures.link.Link.to" title="Link to this definition">¶</a></dt>
+<dd><p>Moves all tensor data in the link to a specified device/dtype.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>dtype</strong> (<em>Optional</em><em>[</em><em>torch.dtype</em><em>]</em><em>, </em><em>optional</em>) – The target data type.</p></li>
+<li><p><strong>device</strong> (<em>Optional</em><em>[</em><em>torch.device</em><em>]</em><em>, </em><em>optional</em>) – The target device.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Returns self for method chaining.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#bard.structures.link.Link" title="bard.structures.link.Link">Link</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<p id="module-bard.structures.visual">Visual geometry representation for robot links.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="bard.structures.visual.Visual">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">bard.structures.visual.</span></span><span class="sig-name descname"><span class="pre">Visual</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">offset</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">geom_type</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">geom_param</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#bard.structures.visual.Visual" title="Link to this definition">¶</a></dt>
+<dd><p>Represents the visual geometry of a robot link for rendering.</p>
+<p>This class stores information about a link’s appearance, such as its shape,
+size, and offset from the link’s reference frame. It is not used for
+physics or collision detection.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.structures.visual.Visual.offset">
+<span class="sig-name descname"><span class="pre">offset</span></span><a class="headerlink" href="#bard.structures.visual.Visual.offset" title="Link to this definition">¶</a></dt>
+<dd><p>The static transform from the link frame to the
+origin of the visual geometry.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Transform3d</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.structures.visual.Visual.geom_type">
+<span class="sig-name descname"><span class="pre">geom_type</span></span><a class="headerlink" href="#bard.structures.visual.Visual.geom_type" title="Link to this definition">¶</a></dt>
+<dd><p>The type of geometry, e.g., ‘box’, ‘cylinder’,
+‘sphere’, or ‘mesh’.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Optional[str]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bard.structures.visual.Visual.geom_param">
+<span class="sig-name descname"><span class="pre">geom_param</span></span><a class="headerlink" href="#bard.structures.visual.Visual.geom_param" title="Link to this definition">¶</a></dt>
+<dd><p>Parameters that define the
+geometry’s shape and size.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Optional[Union[Tuple, str]]</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="index.html">bard</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quickstart.html">Quick Start</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">API Reference</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#module-bard.parsers.urdf">URDF Parsing</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#module-bard.core.kinematics">Kinematics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#module-bard.core.dynamics">Dynamics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#module-bard.core.chain">Robot Chain</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#module-bard.structures.frame">Data Structures</a></li>
+</ul>
+</li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="index.html">Documentation overview</a><ul>
+      <li>Previous: <a href="quickstart.html" title="previous chapter">Quick Start</a></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2025, Yue Wang.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 8.2.3</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+      |
+      <a href="_sources/api.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

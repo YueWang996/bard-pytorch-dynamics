@@ -18,6 +18,7 @@ from .utils import (
 
 
 # ---------- robust POE Jacobian for Chain (full-dim, returns 6 x n_dof) ----------
+@torch.compile
 def calc_jacobian(
     chain: chain.Chain,
     q: torch.Tensor,
