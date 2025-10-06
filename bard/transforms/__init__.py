@@ -1,6 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 
-from pytorch_kinematics.transforms.perturbation import sample_perturbations
+from bard.transforms.perturbation import sample_perturbations
 from .rotation_conversions import (
     axis_angle_to_quaternion,
     euler_angles_to_matrix,
@@ -37,7 +37,7 @@ from .so3 import (
     so3_rotation_angle,
 )
 from .transform3d import Rotate, RotateAxisAngle, Scale, Transform3d, Translate
-from pytorch_kinematics.transforms.math import (
+from bard.transforms.math import (
     quaternion_angular_distance,
     acos_linear_extrapolation,
     quaternion_close,

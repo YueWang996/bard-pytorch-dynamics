@@ -43,6 +43,7 @@ dependencies = [
     "torch>=2.7.1",
     "numpy>=2.3.2",
     "pyyaml>=6.0",
+    "lxml>=6.0",
 ]
 
 [project.optional-dependencies]

@@ -4,7 +4,7 @@ import warnings
 from typing import Tuple
 import torch
 
-from pytorch_kinematics.transforms.math import acos_linear_extrapolation
+from bard.transforms.math import acos_linear_extrapolation
 
 HAT_INV_SKEW_SYMMETRIC_TOL = 1e-5
 
