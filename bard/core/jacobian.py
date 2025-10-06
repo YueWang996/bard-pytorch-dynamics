@@ -25,30 +25,29 @@ def calc_jacobian(
     reference_frame: str = "world",  # "world" (default) or "local"
     return_eef_pose: bool = False,
 ):
-    """
-    POE/Adjoint Jacobian (geometric) for a *tree-like* Chain.
+    """Calculates the kinematic Jacobian for a specific frame.
 
-    This now supports both fixed-base and floating-base robots.
-    For floating-base, q = [tx, ty, tz, qw, qx, qy, qz, joint_angles...].
-    The resulting Jacobian will have 6 (base) + n_joints (articulated) columns.
-
-    Convention: spatial vectors are [v; ω] so that [v; ω] = J * v_dot.
+    This function computes the geometric Jacobian, which maps joint velocities to
+    the spatial velocity (twist) of a given frame. It supports both fixed-base
+    and floating-base robots using a Product of Exponentials (PoE) formulation.
 
     Args:
-        chain: Chain (full robot, tree allowed).
-        q: (D,) or (B, D) tensor/array/list/dict.
-            For fixed-base, D = n_joints.
-            For floating-base, D = 7 + n_joints.
-            Order for joints per chain.get_joint_parameter_names().
-        frame_id: int or str. Name or index of the target frame. You can obtain the index
-            via `chain.get_frame_indices(name).item()`.
-        reference_frame: "world" (default) returns J expressed in WORLD.
-                         "local" returns J expressed in the target frame's LOCAL (body) frame.
-        return_eef_pose: If True, also return WORLD pose of the frame (B,4,4).
+        chain (bard.core.chain.Chain): The robot chain object.
+        q (torch.Tensor): The generalized coordinates of the robot. For fixed-base
+            robots, shape is (B, n_joints) or (n_joints,). For floating-base
+            robots, shape is (B, 7 + n_joints) or (7 + n_joints,).
+        frame_id (Union[int, str]): The integer index or name of the target frame.
+        reference_frame (str, optional): The frame of reference for the output
+            Jacobian. Can be "world" or "local". Defaults to "world".
+        return_eef_pose (bool, optional): If True, also returns the world
+            pose of the target frame. Defaults to False.
 
     Returns:
-        J: (B, 6, D_vel) in the requested `reference_frame`, where D_vel is nv_base + n_joints.
-        (optionally) T_world_to_frame: (B, 4, 4) — WORLD pose of the frame.
+        torch.Tensor or tuple[torch.Tensor, torch.Tensor]:
+            - The Jacobian matrix of shape (B, 6, nv), where nv is the number
+              of velocity variables.
+            - If `return_eef_pose` is True, a tuple containing the Jacobian
+              and the (B, 4, 4) pose matrix of the frame.
     """
     # normalize inputs
     if hasattr(chain, "ensure_tensor"):

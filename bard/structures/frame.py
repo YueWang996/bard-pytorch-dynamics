@@ -17,24 +17,19 @@ LAST = '└── '
 
 
 class Frame:
-    """
-    Node in robot kinematic tree containing joint and link information.
-    
-    A frame represents a coordinate system in the robot. The tree structure
-    is built by connecting frames via parent-child relationships.
-    
+    """A node in the robot kinematic tree, containing joint and link information.
+
+    A frame represents a coordinate system attached to a part of the robot.
+    The kinematic tree is built by connecting these frames in parent-child
+    relationships, forming a chain from the root to the end-effectors.
+
     Attributes:
-        name: Frame identifier
-        link: Link object with mass/inertia properties
-        joint: Joint connecting this frame to parent
-        children: List of child frames
-    
-    Tree Structure:
-        root_frame
-        ├── child1
-        │   ├── grandchild1
-        │   └── grandchild2
-        └── child2
+        name (str): The unique identifier for this frame.
+        link (Link): The link object associated with this frame, containing
+            physical properties like mass and inertia.
+        joint (Joint): The joint that connects this frame to its parent,
+            defining the motion between them.
+        children (List[Frame]): A list of child frames attached to this frame.
     """
 
     def __init__(
@@ -44,14 +39,17 @@ class Frame:
         joint: Optional[Joint] = None,
         children: Optional[List['Frame']] = None
     ):
-        """
-        Initialize kinematic frame.
+        """Initializes a kinematic frame.
         
         Args:
-            name: Frame name/identifier
-            link: Link object for this frame
-            joint: Joint connecting to parent frame
-            children: List of child frames
+            name (Optional[str], optional): The name/identifier for the frame.
+                Defaults to None.
+            link (Optional[Link], optional): The link object for this frame.
+                Defaults to an empty Link.
+            joint (Optional[Joint], optional): The joint connecting this frame to
+                its parent. Defaults to a fixed Joint.
+            children (Optional[List[Frame]], optional): A list of child frames.
+                Defaults to an empty list.
         """
         self.name = 'None' if name is None else name
         self.link = link if link is not None else Link()
@@ -59,16 +57,7 @@ class Frame:
         self.children = children if children is not None else []
 
     def __str__(self, prefix: str = '', root: bool = True) -> str:
-        """
-        Pretty-print kinematic tree structure.
-        
-        Args:
-            prefix: Indentation prefix for current level
-            root: Whether this is the root frame
-            
-        Returns:
-            String representation of tree
-        """
+        """Generates a string representation of the kinematic tree from this frame down."""
         pointers = [TEE] * (len(self.children) - 1) + [LAST]
         
         if root:
@@ -89,15 +78,14 @@ class Frame:
         dtype: Optional[torch.dtype] = None,
         device: Optional[torch.device] = None
     ) -> 'Frame':
-        """
-        Move frame data to specified dtype/device.
-        
+        """Moves all tensor data in the frame and its children to a specified device/dtype.
+
         Args:
-            dtype: Target data type
-            device: Target device
-            
+            dtype (Optional[torch.dtype], optional): The target data type. Defaults to None.
+            device (Optional[torch.device], optional): The target device. Defaults to None.
+
         Returns:
-            Self for method chaining
+            Frame: Returns self for method chaining.
         """
         self.joint = self.joint.to(dtype=dtype, device=device)
         self.link = self.link.to(dtype=dtype, device=device)
@@ -105,35 +93,33 @@ class Frame:
         return self
 
     def add_child(self, child: 'Frame') -> None:
-        """
-        Add child frame to this frame.
+        """Adds a child frame to this frame's list of children.
         
         Args:
-            child: Child frame to add
+            child (Frame): The child frame to add.
         """
         self.children.append(child)
 
     def is_end_effector(self) -> bool:
-        """
-        Check if this frame is a leaf node (end-effector).
+        """Checks if this frame is a leaf node in the kinematic tree.
         
         Returns:
-            True if frame has no children
+            bool: True if the frame has no children, otherwise False.
         """
         return len(self.children) == 0
 
     def get_transform(self, theta: torch.Tensor) -> tf.Transform3d:
-        """
-        Compute joint transform for given joint position(s).
+        """Computes the transformation for the joint associated with this frame.
+
+        This transform represents the motion of the joint given a joint angle `theta`.
+        It is composed with the joint's static offset.
         
         Args:
-            theta: Joint position(s), shape (B,) or scalar
+            theta (torch.Tensor): The joint position(s). Can be a scalar or a
+                batched tensor of shape (B,).
             
         Returns:
-            Transform3d representing joint motion
-            
-        Note:
-            For batched theta, returns batched transforms.
+            tf.Transform3d: A Transform3d object representing the batched joint motion.
         """
         dtype = self.joint.axis.dtype
         device = self.joint.axis.device
@@ -147,40 +133,29 @@ class Frame:
         batch_size = theta.shape[0]
         
         if self.joint.joint_type == 'revolute':
-            # Rotation about joint axis
             rot = axis_and_angle_to_matrix_33(self.joint.axis, theta)
             transform = tf.Transform3d(rot=rot, dtype=dtype, device=device)
-            
         elif self.joint.joint_type == 'prismatic':
-            # Translation along joint axis
             pos = theta.unsqueeze(1) * self.joint.axis
             transform = tf.Transform3d(pos=pos, dtype=dtype, device=device)
-            
         elif self.joint.joint_type == 'fixed':
-            # Identity transform
-            transform = tf.Transform3d(
-                default_batch_size=batch_size,
-                dtype=dtype,
-                device=device
-            )
+            transform = tf.Transform3d(default_batch_size=batch_size, dtype=dtype, device=device)
         else:
             raise ValueError(f"Unsupported joint type: {self.joint.joint_type}")
         
-        # Compose with joint offset if present
         if self.joint.offset is None:
             return transform
         else:
             return self.joint.offset.compose(transform)
 
     def find_by_name(self, target_name: str) -> Optional['Frame']:
-        """
-        Find frame by name in subtree.
+        """Finds a frame by name within this frame's subtree.
         
         Args:
-            target_name: Name of frame to find
+            target_name (str): The name of the frame to find.
             
         Returns:
-            Frame object if found, None otherwise
+            Optional['Frame']: The Frame object if found, otherwise None.
         """
         if self.name == target_name:
             return self
@@ -193,11 +168,10 @@ class Frame:
         return None
 
     def get_all_frames(self) -> List['Frame']:
-        """
-        Get all frames in subtree (depth-first order).
+        """Returns a list of all frames in the subtree starting from this frame.
         
         Returns:
-            List of all frames including self
+            List[Frame]: A list of all frames in depth-first order.
         """
         frames = [self]
         for child in self.children:
@@ -205,14 +179,14 @@ class Frame:
         return frames
 
     def count_joints(self, exclude_fixed: bool = True) -> int:
-        """
-        Count joints in subtree.
+        """Counts the number of joints in the subtree starting from this frame.
         
         Args:
-            exclude_fixed: Whether to exclude fixed joints
+            exclude_fixed (bool, optional): If True, fixed joints are not
+                counted. Defaults to True.
             
         Returns:
-            Number of joints
+            int: The total number of joints.
         """
         count = 0
         if not (exclude_fixed and self.joint.joint_type == 'fixed'):
@@ -224,6 +198,7 @@ class Frame:
         return count
 
     def __repr__(self) -> str:
+        """Returns a concise string representation of the Frame."""
         num_children = len(self.children)
         return (f"Frame(name='{self.name}', "
                 f"joint_type='{self.joint.joint_type}', "

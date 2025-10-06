@@ -24,25 +24,22 @@ def calc_forward_kinematics(
     q: torch.Tensor,
     frame_id: int,
 ) -> tf.Transform3d:
-    """
-    Vectorized forward kinematics (WORLD pose) for a *single* frame/link.
+    """Calculates the forward kinematics for a specific frame.
 
-    Composition order:
-        WORLD -> (optional base pose) -> ... -> parent -> joint_origin -> motion(q) -> link_offset == child (WORLD)
+    This function computes the world pose of a single target frame given the
+    robot's generalized coordinates. It supports batching for parallel computation.
 
     Args:
-        chain: Robot Chain (tree supported). If `chain.has_floating_base` is True,
-               the input q may contain a 7D base pose [tx,ty,tz, qw,qx,qy,qz] *before*
-               the articulated joint positions.
-        q: (n_joints,) or (B, n_joints)    — fixed base
-           (7 + n_joints,) or (B, 7 + n_joints)  — floating base (xyz + unit quaternion, then joints)
-           Order for joints must match `chain.get_joint_parameter_names()`.
-        frame_id: int. Name or index of the target frame. You can obtain the index
-            via `chain.get_frame_indices(name).item()`.
+        chain (bard.core.chain.Chain): The robot chain object.
+        q (torch.Tensor): The generalized coordinates of the robot.
+            Shape (B, nq) or (nq,), where B is the batch size and nq is the
+            number of configuration variables.
+        frame_id (int): The integer index of the target frame.
 
     Returns:
-        Transform3d: WORLD pose of the requested frame for each batch element
-                     (absolute operational frame placement wrt the world).
+        bard.transforms.Transform3d: A Transform3d object containing the
+            batched (B, 4, 4) homogeneous transformation matrices representing
+            the world pose of the frame.
     """
     # ---- normalize inputs ----
     q_in = normalize_joint_positions(chain, q)  # (B, D)
@@ -150,24 +147,24 @@ def end_effector_acceleration(
     frame_name: str,
     reference_frame: str = "local",
 ):
-    """
-    Spatial acceleration of frame for given state (supports floating-base).
+    """Computes the classical spatial acceleration of a frame.
 
-    Conventions:
-      - Spatial vectors use [v; w] = [linear; angular].
-      - RNEA-style forward pass with per-link quantities in CHILD link frame.
-      - Gravity enters as world spatial acceleration a0 = [0; 0] (disabled for pure kinematics).
+    This function implements the forward pass of the Recursive Newton-Euler
+    Algorithm (RNEA) to determine the acceleration of a body, including
+    Coriolis and centrifugal effects.
 
     Args:
-        chain: robot chain
-        q, qd, qdd: Generalized position, velocity, acceleration.
-                    For floating base: [base_pose, joints]
-                    Shape (D,) or (B, D)
-        frame_name: str or int — target frame
-        reference_frame: "local" (default) or "world"
+        chain (bard.core.chain.Chain): The robot chain object.
+        q (torch.Tensor): Generalized coordinates (position). Shape (B, nq) or (nq,).
+        qd (torch.Tensor): Generalized velocities. Shape (B, nv) or (nv,).
+        qdd (torch.Tensor): Generalized accelerations. Shape (B, nv) or (nv,).
+        frame_name (Union[str, int]): The name or integer index of the target frame.
+        reference_frame (str, optional): The frame of reference for the output
+            acceleration. Can be "world" or "local". Defaults to "local".
 
     Returns:
-        (6,) or (B, 6) spatial acceleration in selected reference_frame.
+        torch.Tensor: The spatial acceleration vector [linear; angular] of
+            shape (B, 6).
     """
     dtype, device = chain.dtype, chain.device
 

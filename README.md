@@ -1,44 +1,44 @@
-# Bard: Batched Articulated Robot Dynamics
+# bard: Batched Articulated Robot Dynamics
+
+[](https://www.google.com/search?q=https://github.com/YueWang996/bard/actions)
+[](https://opensource.org/licenses/MIT)
 
 Efficient robot kinematics and dynamics in PyTorch, designed for batch processing and differentiability.
 
-`bard` is a lightweight, PyTorch-native library for rigid-body dynamics that leverages tensor operations to perform batched computations on the CPU or GPU. It's an ideal tool for robotics research, especially in areas like reinforcement learning, trajectory optimization, and model-based control, where performing parallel computations over many robot states is critical.
+`bard` is a lightweight, PyTorch-native library for rigid-body dynamics that leverages tensor operations to perform batched computations on the CPU or GPU. It provides a simple yet powerful API for loading robots from URDF files and analysing their motion using standard robotics algorithms.
 
------
+The primary motivation behind `bard` is to provide a dynamics library that integrates seamlessly into modern machine learning workflows. By treating the robot's state and dynamics as a differentiable computation graph, it becomes an ideal tool for robotics research in areas like reinforcement learning, trajectory optimization, physics-informed learning, and system identification.
 
 ## Key Features ✨
 
-  * **PyTorch Native**: Built entirely on PyTorch for seamless integration with modern machine learning pipelines.
+  * **PyTorch Native**: Built entirely on PyTorch for seamless integration.
   * **Batch Processing**: All core functions operate on batches of robot states, enabling massive parallelism.
-  * **GPU Acceleration**: Run your dynamics computations on NVIDIA GPUs for significant speedups.
-  * **Differentiable**: The entire computation graph is differentiable, allowing for gradient-based optimization through the dynamics.
-  * **Comprehensive Dynamics**:
+  * **GPU Acceleration**: Run dynamics computations on NVIDIA GPUs for significant speedups.
+  * **Differentiable**: The computation graph is differentiable, allowing for gradient-based optimization through the robot's dynamics.
+  * **Comprehensive Algorithms**:
       * Forward Kinematics
       * Jacobian Calculation (in world and local frames)
       * Inverse Dynamics (RNEA)
       * Mass Matrix / Inertia Matrix (CRBA)
   * **Floating-Base Support**: Natively handles both fixed-base manipulators and floating-base systems like humanoids or quadrupeds.
-  * **URDF Parsing**: Load robots directly from URDF files.
-
------
+  * **URDF Parsing**: Load robot models directly from URDF files.
 
 ## Installation
 
-You can install `bard` directly from PyPI.
+Clone this repository and install the package in editable mode. This will install the core dependencies (`torch`, `numpy`).
 
 ```bash
-pip install bard
-```
-
-For development, clone this repository and install in editable mode with all development dependencies (including `pytest` for testing and `pinocchio` for baseline comparisons):
-
-```bash
-git clone https://github.com/yourusername/bard.git
+git clone https://github.com/YueWang996/bard.git
 cd bard
 pip install -e .
 ```
 
------
+To run the test suite, you must also install the development dependencies:
+
+```bash
+# From the project root directory
+pip install -e .[dev]
+```
 
 ## Quick Start
 
@@ -47,7 +47,7 @@ Here is a simple example of performing batched forward kinematics and Jacobian c
 ```python
 import torch
 from bard.parsers.urdf import build_chain_from_urdf
-from bard.core.forward_kinematics import calc_forward_kinematics
+from bard.core.kinematics import calc_forward_kinematics
 from bard.core.jacobian import calc_jacobian
 
 # A simple 2-link robot URDF
@@ -83,7 +83,6 @@ ee_frame = "link3"
 ee_idx = chain.get_frame_indices(ee_frame).item()
 
 # 4. Perform batched forward kinematics
-# Returns a Transform3d object containing the results
 transforms = calc_forward_kinematics(chain, q, ee_idx)
 ee_positions = transforms.get_matrix()[:, :3, 3] # Extract XYZ positions
 
@@ -96,24 +95,9 @@ print(f"End-effector position shape: {ee_positions.shape}") # torch.Size([100, 3
 print(f"Jacobian shape: {J.shape}")                       # torch.Size([100, 6, 2])
 ```
 
------
-
-## API Overview
-
-The core API is simple and functional.
-
-  * `build_chain_from_urdf(urdf_data, floating_base=False)`: Parses a URDF file string and returns a `Chain` object.
-  * `calc_forward_kinematics(chain, q, frame_id)`: Computes the world pose of a specific frame.
-  * `calc_jacobian(chain, q, frame_id, reference_frame="world")`: Computes the Jacobian for a specific frame.
-  * `calc_inverse_dynamics(chain, q, qd, qdd, gravity=...)`: Computes joint forces/torques via RNEA.
-  * `crba_inertia_matrix(chain, q)`: Computes the joint-space inertia matrix (mass matrix).
-  * `end_effector_acceleration(chain, q, qd, qdd, frame_id, ...)`: Computes the spatial acceleration of a frame.
-
------
-
 ## Running Tests
 
-The library is rigorously tested against the `pinocchio` library. To run the tests, first install the development dependencies, then run `pytest`.
+The library is rigorously tested against `pinocchio`. To run the full test suite, install the development dependencies and run `pytest`.
 
 ```bash
 # From the project root directory
@@ -121,7 +105,14 @@ pip install -e .[dev]
 pytest
 ```
 
------
+## Acknowledgements
+
+This library builds upon the excellent work of several other open-source projects.
+
+  * The core `bard/transforms` module is adapted from **`pytorch3d`**. This approach was chosen to avoid including the entirety of `pytorch3d` as a dependency. An important difference is that `bard` uses left-multiplied transforms (`T * pt`), which is the standard convention in robotics, as opposed to `pytorch3d`'s right-multiplied convention.
+  * The `bard/parsers/urdf_parser_py` module is extracted from **`kinpy`**.
+  * This project is heavily inspired by the structure and API of **`pytorch_kinematics`**, from which some of the components were adapted.
+  * Numerical results are validated against **`pinocchio`**.
 
 ## License
 

@@ -1,5 +1,12 @@
+"""
+URDF parser for building a `bard` kinematic Chain.
+
+This module provides the `build_chain_from_urdf` function, which serves as the
+primary entry point for creating a robot model from a URDF file's content. It
+handles parsing of links, joints, and inertial properties, and supports the
+creation of both fixed-base and floating-base robot representations.
+"""
 from .urdf_parser_py.urdf import URDF, Mesh, Cylinder, Box, Sphere
-# from bard.structures import frame
 from bard.structures import Frame, Joint, Link, Visual
 from bard.core import chain
 import torch
@@ -15,7 +22,7 @@ JOINT_TYPE_MAP = {
 
 
 def _convert_transform(origin):
-    """Convert URDF origin to Transform3d."""
+    """Converts a URDF <origin> tag into a bard Transform3d object."""
     if origin is None:
         return tf.Transform3d()
     rpy = torch.tensor(origin.rpy, dtype=torch.float32, device="cpu")
@@ -23,7 +30,7 @@ def _convert_transform(origin):
 
 
 def _convert_inertial(inertial):
-    """Convert URDF inertial to (transform, mass, inertia_matrix) tuple."""
+    """Converts a URDF <inertial> tag into an (offset, mass, inertia_tensor) tuple."""
     if inertial is None:
         return None
     origin = _convert_transform(inertial.origin)
@@ -37,7 +44,7 @@ def _convert_inertial(inertial):
 
 
 def _convert_visual(visual):
-    """Convert URDF visual to Visual frame."""
+    """Converts a URDF <visual> tag into a bard Visual object."""
     if visual is None or visual.geometry is None:
         return Visual()
     
@@ -63,11 +70,19 @@ def _convert_visual(visual):
 
 
 def _build_chain_recurse(root_frame, lmap, joints):
-    """Recursively build kinematic tree from URDF joints."""
+    """Recursively traverses the joint list to build the kinematic tree structure.
+
+    Args:
+        root_frame (bard.structures.Frame): The parent frame to which children will be attached.
+        lmap (dict): A dictionary mapping link names to link objects from the URDF parser.
+        joints (list): The list of all joint objects from the URDF parser.
+
+    Returns:
+        list[bard.structures.Frame]: A list of child frames attached to the `root_frame`.
+    """
     children = []
     for j in joints:
         if j.parent == root_frame.link.name:
-            # Extract joint limits
             try:
                 limits = (j.limit.lower, j.limit.upper)
             except AttributeError:
@@ -83,7 +98,6 @@ def _build_chain_recurse(root_frame, lmap, joints):
             except AttributeError:
                 effort_limits = None
             
-            # Create child frame
             child_frame = Frame(j.child)
             child_frame.joint = Joint(
                 j.name,
@@ -95,7 +109,6 @@ def _build_chain_recurse(root_frame, lmap, joints):
                 effort_limits=effort_limits
             )
             
-            # Add link information
             link = lmap[j.child]
             child_frame.link = Link(
                 link.name,
@@ -104,7 +117,6 @@ def _build_chain_recurse(root_frame, lmap, joints):
                 visuals=[_convert_visual(link.visual)]
             )
             
-            # Recurse for children
             child_frame.children = _build_chain_recurse(child_frame, lmap, joints)
             children.append(child_frame)
     
@@ -119,43 +131,46 @@ def build_chain_from_urdf(
     dtype=torch.float32,
     device="cpu",
 ):
-    """
-    Build a Chain from URDF data.
+    """Builds a `bard` Chain object from a URDF data string.
+
+    This is the main entry point for creating a kinematic chain from a URDF.
+    It parses the XML data, constructs the kinematic tree, and can optionally
+    prepend a 6-DOF floating base for models like quadrupeds or humanoids.
 
     Args:
-        data: URDF XML string
-        floating_base: If True, wrap URDF root in synthetic floating base
-        base_frame_name: Name of synthetic base frame (only used if floating_base=True)
-        dtype: Torch dtype for the chain
-        device: Torch device for the chain
+        data (str or bytes): The URDF XML content as a string or bytes.
+        floating_base (bool, optional): If True, a 6-DOF floating base is
+            prepended to the root of the kinematic tree. Defaults to False.
+        base_frame_name (str, optional): The name assigned to the synthetic base
+            frame when `floating_base` is True. Defaults to "floating_base".
+        dtype (torch.dtype, optional): The PyTorch data type to use for the
+            chain's tensors. Defaults to torch.float32.
+        device (str or torch.device, optional): The PyTorch device to place the
+            chain's tensors on. Defaults to "cpu".
 
     Returns:
-        Chain object with configuration format:
-            Fixed-base: q = [joint_angles...]
-            Floating-base: q = [tx, ty, tz, qw, qx, qy, qz, joint_angles]
+        bard.core.chain.Chain: The constructed kinematic chain object. The configuration
+            vector `q` will have the following format:
+            - **Fixed-base**: `q = [joint_angle_1, ...]`
+            - **Floating-base**: `q = [tx, ty, tz, qw, qx, qy, qz, joint_angle_1, ...]`
+    
+    Raises:
+        ValueError: If a root link cannot be determined from the URDF structure.
     """
     robot = URDF.from_xml_string(data)
     lmap = robot.link_map
     joints = robot.joints
     n_joints = len(joints)
 
-    # Find URDF root link (parent that is never a child)
-    has_root = [True] * n_joints
-    for i in range(n_joints):
-        for j in range(i + 1, n_joints):
-            if joints[i].parent == joints[j].child:
-                has_root[i] = False
-            elif joints[j].parent == joints[i].child:
-                has_root[j] = False
+    # Find URDF root link (a parent that is never a child)
+    is_child = {j.child for j in joints}
+    root_links = [j.parent for j in joints if j.parent not in is_child]
     
-    root_link = None
-    for i in range(n_joints):
-        if has_root[i]:
-            root_link = lmap[joints[i].parent]
-            break
+    if not root_links:
+        raise ValueError("Could not find a root link in the URDF (a link that is a parent but not a child).")
     
-    if root_link is None:
-        raise ValueError("Could not find root link in URDF")
+    root_link_name = root_links[0]
+    root_link = lmap[root_link_name]
 
     # Build kinematic tree from URDF root
     root_frame = Frame(root_link.name)
@@ -168,7 +183,7 @@ def build_chain_from_urdf(
     )
     root_frame.children = _build_chain_recurse(root_frame, lmap, joints)
 
-    # Optionally wrap with floating base
+    # Optionally wrap with a synthetic floating base
     if floating_base:
         base_frame = Frame(base_frame_name)
         base_frame.joint = Joint(
@@ -179,7 +194,7 @@ def build_chain_from_urdf(
         base_frame.children = [root_frame]
         root_frame = base_frame
 
-    # Create Chain with floating base flag
+    # Create and return the final Chain object
     return chain.Chain(
         root_frame,
         floating_base=floating_base,
