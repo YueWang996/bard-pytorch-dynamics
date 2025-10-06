@@ -11,3 +11,7 @@ __pycache__/
 /.Spotlight-V100
 .Trashes
 .fseventsd
+
+# Packaging
+*.egg-info/
+*.egg-info
