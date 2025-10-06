@@ -9,8 +9,7 @@ import torch
 
 from .rotation_conversions import _axis_angle_rotation, matrix_to_quaternion, quaternion_to_matrix, \
     euler_angles_to_matrix
-from pytorch_kinematics.transforms.perturbation import sample_perturbations
-from arm_pytorch_utilities import linalg
+from bard.transforms.perturbation import sample_perturbations
 
 DEFAULT_EULER_CONVENTION = "XYZ"
 
@@ -332,7 +331,7 @@ class Transform3d:
 
         composed_matrix = self.get_matrix().transpose(-1, -2)
         if batch_to_batch:
-            points_out = linalg.batch_batch_product(points_batch, composed_matrix)
+            points_out = points_batch @ composed_matrix
         else:
             points_out = _broadcast_bmm(points_batch, composed_matrix)
         denom = points_out[..., 3:]  # denominator
@@ -367,9 +366,11 @@ class Transform3d:
         mat = self.inverse().get_matrix()[:, :3, :3]
 
         if batch_to_batch:
-            normals_out = linalg.batch_batch_product(normals, mat)
+            # Note: `normals` might be (N, P, 3), so we need to apply the (N, 3, 3) matrix `mat`
+            # The @ operator handles this correctly.
+            normals_out = normals @ mat.transpose(-1, -2) # Standard formula for normals is (R^-1)^T
         else:
-            normals_out = _broadcast_bmm(normals, mat)
+            normals_out = _broadcast_bmm(normals, mat.transpose(-1, -2))
 
         # This doesn't pass unit tests. TODO investigate further
         # if self._lu is None:
