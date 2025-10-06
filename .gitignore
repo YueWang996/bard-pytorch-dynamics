@@ -5,3 +5,9 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+
+# macOS
+.DS_Store
+/.Spotlight-V100
+.Trashes
+.fseventsd
