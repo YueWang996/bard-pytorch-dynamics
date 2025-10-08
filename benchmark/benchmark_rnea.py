@@ -9,8 +9,17 @@ import torch
 import numpy as np
 import pinocchio as pin
 import time
-from benchconf import URDF_PATH, BATCH_SIZES, NUM_REPEATS, WARMUP_ITERS, DEVICE, DTYPE
 
+from bard.parsers.urdf import build_chain_from_urdf
+from bard import RNEA
+from benchconf import (
+    URDF_PATH,
+    BATCH_SIZES,
+    NUM_REPEATS,
+    WARMUP_ITERS,
+    DEVICE,
+    DTYPE
+)
 
 print(f"Device: {DEVICE}, Dtype: {DTYPE}")
 
