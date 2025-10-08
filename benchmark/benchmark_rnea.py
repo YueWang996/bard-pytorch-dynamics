@@ -23,7 +23,7 @@ print(f"Device: {DEVICE}, Dtype: {DTYPE}")
 
 def load_robot():
     """Load robot in both Bard and Pinocchio."""
-    with open(URDF_PATH, "r") as f:
+    with open(URDF_PATH, "rb") as f:
         urdf_string = f.read()
 
     # Bard
