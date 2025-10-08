@@ -533,7 +533,7 @@ class CRBA:
 
         Returns:
             torch.Tensor: The batched mass matrix ``M``.
-            
+
               - For fixed-base robots, shape is ``(B, n_joints, n_joints)``.
               - For floating-base robots, shape is ``(B, 6 + n_joints, 6 + n_joints)``.
 

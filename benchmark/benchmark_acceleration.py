@@ -12,19 +12,7 @@ import time
 
 from bard.parsers.urdf import build_chain_from_urdf
 from bard import SpatialAcceleration
-
-# ============================================================================
-# Configuration
-# ============================================================================
-script_dir = Path(__file__).parent
-URDF_PATH = script_dir / "../tests/spined_dog_asset/spined_dog_no_foot.urdf"
-
-BATCH_SIZES = [10, 100, 1000, 10000]
-NUM_REPEATS = 100
-WARMUP_ITERS = 50
-
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-DTYPE = torch.float64
+from benchconf import URDF_PATH, BATCH_SIZES, NUM_REPEATS, WARMUP_ITERS, DEVICE, DTYPE
 
 print(f"Device: {DEVICE}, Dtype: {DTYPE}")
 
@@ -231,7 +219,11 @@ def main():
 
     # Create SpatialAcceleration object once with max batch size
     max_batch = max(BATCH_SIZES)
-    accel = SpatialAcceleration(chain, max_batch_size=max_batch)
+    if DEVICE == "cuda":
+        accel = SpatialAcceleration(chain, max_batch_size=max_batch, compile_enabled=True)
+    else:
+        accel = SpatialAcceleration(chain, max_batch_size=max_batch, compile_enabled=False)
+    accel = accel.to(dtype=DTYPE, device=DEVICE)
 
     # Select test frame (end-effector)
     test_frame_name = chain.get_frame_names(exclude_fixed=True)[-1]

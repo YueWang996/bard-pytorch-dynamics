@@ -12,19 +12,8 @@ import time
 
 from bard.parsers.urdf import build_chain_from_urdf
 from bard import CRBA
+from benchconf import URDF_PATH, BATCH_SIZES, NUM_REPEATS, WARMUP_ITERS, DEVICE, DTYPE
 
-# ============================================================================
-# Configuration
-# ============================================================================
-script_dir = Path(__file__).parent
-URDF_PATH = script_dir / "../tests/spined_dog_asset/spined_dog_no_foot.urdf"
-
-BATCH_SIZES = [1000, 10000]
-NUM_REPEATS = 100
-WARMUP_ITERS = 50
-
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-DTYPE = torch.float64
 
 print(f"Device: {DEVICE}, Dtype: {DTYPE}")
 

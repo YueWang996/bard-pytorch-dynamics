@@ -139,7 +139,7 @@ class ForwardKinematics:
 
         Args:
             q (torch.Tensor): A batch of generalized positions.
-            
+
                 - For fixed-base robots, shape is ``(B, n_joints)``.
                 - For floating-base robots, shape is ``(B, 7 + n_joints)``,
                   where the first 7 elements are ``[tx, ty, tz, qw, qx, qy, qz]``.
