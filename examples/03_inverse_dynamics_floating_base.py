@@ -1,43 +1,48 @@
+from pathlib import Path
 import torch
 from bard.parsers.urdf import build_chain_from_urdf
-from bard.core.dynamics import calc_inverse_dynamics
+from bard.core.dynamics import RNEA
+
+script_dir = Path(__file__).parent
+urdf_path = script_dir / "example_robots/go2_description/urdf/go2.urdf"
 
 def main():
     """
     An example of computing inverse dynamics (RNEA) for a floating-base robot.
     """
     try:
-        with open("examples/simple_arm.urdf", "r") as f:
+        with open(urdf_path, "rb") as f:
             urdf_string = f.read()
     except FileNotFoundError:
-        print("Error: test_robot.urdf not found. Please provide a valid path.")
+        print(f"Error: {urdf_path} not found. Please provide a valid path.")
         return
 
     # 1. Build the chain with floating_base=True
     chain = build_chain_from_urdf(urdf_string, floating_base=True).to(dtype=torch.float64)
     print(f"Floating-base robot loaded. nq={chain.nq}, nv={chain.nv}")
+    
+    # Instantiate the RNEA class once
+    rnea = RNEA(chain, max_batch_size=1)
 
     # 2. Define a complete state for the robot
-    # Configuration `q`: [tx, ty, tz, qw, qx, qy, qz, joint_angles...]
-    q_base = torch.tensor([0.1, 0.2, 0.3, 1.0, 0.0, 0.0, 0.0], dtype=torch.float64) # Near-identity pose
+    q_base = torch.tensor([0.1, 0.2, 0.3, 1.0, 0.0, 0.0, 0.0], dtype=torch.float64)
     q_joints = torch.zeros(chain.n_joints, dtype=torch.float64)
     q = torch.cat([q_base, q_joints])
-    
-    # Velocity `qd`: [vx, vy, vz, wx, wy, wz, joint_velocities...]
     qd = torch.randn(chain.nv, dtype=torch.float64)
-    
-    # Acceleration `qdd`: [ax, ay, az, alphax, alphay, alphaz, joint_accelerations...]
     qdd = torch.randn(chain.nv, dtype=torch.float64)
+
+    # Add a batch dimension to all inputs
+    q_batch, qd_batch, qdd_batch = q.unsqueeze(0), qd.unsqueeze(0), qdd.unsqueeze(0)
 
     # 3. Define world gravity
     gravity = torch.tensor([0.0, 0.0, -9.81], dtype=torch.float64)
 
     # 4. Compute inverse dynamics with RNEA
-    # This calculates the forces/torques required to achieve the given accelerations
-    tau = calc_inverse_dynamics(chain, q, qd, qdd, gravity=gravity)[0]
+    tau_batch = rnea.calc(q_batch, qd_batch, qdd_batch, gravity=gravity)
 
-    # 5. Interpret the results
-    base_wrench = tau[:6]  # First 6 elements are the force and torque on the base
+    # 5. Interpret the results by extracting the single entry from the batch
+    tau = tau_batch[0]
+    base_wrench = tau[:6]
     joint_torques = tau[6:]
 
     print("\n--- Inverse Dynamics Results ---")
