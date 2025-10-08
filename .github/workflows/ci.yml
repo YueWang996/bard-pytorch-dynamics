@@ -64,7 +64,7 @@ jobs:
     
     environment:
       name: github-pages
-      url: ${{ https://yuewang996.github.io/bard/ }}
+      url: ${{ yuewang996.github.io/bard/ }}
       
     runs-on: ubuntu-latest
     steps:
