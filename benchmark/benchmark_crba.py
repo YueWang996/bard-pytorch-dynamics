@@ -1,7 +1,7 @@
 """
-Simplified benchmark script for class-based RNEA API.
+Simplified benchmark script for class-based CRBA API.
 
-Compares Bard's batched RNEA against Pinocchio's sequential implementation.
+Compares Bard's batched CRBA against Pinocchio's sequential implementation.
 """
 
 from pathlib import Path
@@ -11,7 +11,7 @@ import pinocchio as pin
 import time
 
 from bard.parsers.urdf import build_chain_from_urdf
-from bard import RNEA
+from bard import CRBA
 
 # ============================================================================
 # Configuration
@@ -48,13 +48,12 @@ def load_robot():
     return chain, pin_model, pin_data
 
 
-def generate_random_state(chain, batch_size):
-    """Generate random state vectors."""
+def generate_random_configuration(chain, batch_size):
+    """Generate random configuration vectors."""
     # Bard format
     q = torch.randn(batch_size, chain.nq, device=DEVICE, dtype=DTYPE)
+    # Normalize quaternions (indices 3:7 for floating base)
     q[:, 3:7] = q[:, 3:7] / torch.linalg.norm(q[:, 3:7], dim=1, keepdim=True)
-    qd = torch.randn(batch_size, chain.nv, device=DEVICE, dtype=DTYPE)
-    qdd = torch.randn(batch_size, chain.nv, device=DEVICE, dtype=DTYPE)
     
     # Pinocchio format (convert quaternion from [qw,qx,qy,qz] to [qx,qy,qz,qw])
     q_pin = []
@@ -67,21 +66,18 @@ def generate_random_state(chain, batch_size):
             q_i[7:]            # joints
         ]))
     
-    qd_pin = qd.cpu().numpy()
-    qdd_pin = qdd.cpu().numpy()
-    
-    return q, qd, qdd, q_pin, qd_pin, qdd_pin
+    return q, q_pin
 
 
 # ============================================================================
 # Benchmarking
 # ============================================================================
 
-def benchmark_bard(rnea, q, qd, qdd, num_repeats, warmup_iters):
-    """Benchmark Bard RNEA."""
+def benchmark_bard(crba, q, num_repeats, warmup_iters):
+    """Benchmark Bard CRBA."""
     # Warmup
     for _ in range(warmup_iters):
-        _ = rnea.calc(q, qd, qdd)
+        _ = crba.calc(q)
     
     if DEVICE == "cuda":
         torch.cuda.synchronize()
@@ -93,7 +89,7 @@ def benchmark_bard(rnea, q, qd, qdd, num_repeats, warmup_iters):
             torch.cuda.synchronize()
         
         start = time.perf_counter()
-        _ = rnea.calc(q, qd, qdd)
+        _ = crba.calc(q)
         
         if DEVICE == "cuda":
             torch.cuda.synchronize()
@@ -103,33 +99,46 @@ def benchmark_bard(rnea, q, qd, qdd, num_repeats, warmup_iters):
     return np.array(times)
 
 
-def benchmark_pinocchio(model, data, q_list, qd_np, qdd_np, num_repeats, warmup_iters):
-    """Benchmark Pinocchio RNEA."""
+def benchmark_pinocchio(model, data, q_list, num_repeats, warmup_iters):
+    """Benchmark Pinocchio CRBA."""
     batch_size = len(q_list)
     
     # Warmup
     for _ in range(warmup_iters):
         for i in range(batch_size):
-            _ = pin.rnea(model, data, q_list[i], qd_np[i], qdd_np[i])
+            _ = pin.crba(model, data, q_list[i])
     
     # Benchmark
     times = []
     for _ in range(num_repeats):
         start = time.perf_counter()
         for i in range(batch_size):
-            _ = pin.rnea(model, data, q_list[i], qd_np[i], qdd_np[i])
+            _ = pin.crba(model, data, q_list[i])
         times.append(time.perf_counter() - start)
     
     return np.array(times)
 
 
-def verify_correctness(rnea, q, qd, qdd, pin_model, pin_data, q_pin, qd_pin, qdd_pin):
+def verify_correctness(crba, q, pin_model, pin_data, q_pin):
     """Verify that Bard and Pinocchio produce similar results."""
-    tau_bard = rnea.calc(q[:1], qd[:1], qdd[:1])[0].cpu().numpy()
-    tau_pin = pin.rnea(pin_model, pin_data, q_pin[0], qd_pin[0], qdd_pin[0])
+    # Compute mass matrix with both
+    M_bard = crba.calc(q[:1])[0].cpu().numpy()
+    M_pin = pin.crba(pin_model, pin_data, q_pin[0])
     
-    max_diff = np.abs(tau_bard - tau_pin).max()
-    print(f"Max difference: {max_diff:.2e}")
+    # CRBA in Pinocchio only fills upper triangle, need to symmetrize
+    M_pin = np.triu(M_pin) + np.triu(M_pin, 1).T
+    
+    max_diff = np.abs(M_bard - M_pin).max()
+    mean_diff = np.abs(M_bard - M_pin).mean()
+    
+    print(f"Max difference:  {max_diff:.2e}")
+    print(f"Mean difference: {mean_diff:.2e}")
+    
+    # Check relative error for non-zero elements
+    mask = np.abs(M_pin) > 1e-10
+    if mask.any():
+        rel_error = np.abs((M_bard[mask] - M_pin[mask]) / M_pin[mask]).max()
+        print(f"Max relative error: {rel_error:.2e}")
     
     tolerance = 1e-6
     if max_diff > tolerance:
@@ -146,18 +155,19 @@ def verify_correctness(rnea, q, qd, qdd, pin_model, pin_data, q_pin, qd_pin, qdd
 
 def main():
     print("=" * 70)
-    print("RNEA Benchmark: Bard (Class-based) vs Pinocchio")
+    print("CRBA Benchmark: Bard (Class-based) vs Pinocchio")
     print("=" * 70)
     
     # Load robot
     chain, pin_model, pin_data = load_robot()
     
-    # Create RNEA object once with max batch size
+    # Create CRBA object once with max batch size
     max_batch = max(BATCH_SIZES)
-    rnea = RNEA(chain, max_batch_size=max_batch)
+    crba = CRBA(chain, max_batch_size=max_batch)
     
-    print(f"\nRNEA object created with max_batch_size={max_batch}")
+    print(f"\nCRBA object created with max_batch_size={max_batch}")
     print(f"Robot: {chain.n_joints} joints, {chain.n_nodes} nodes")
+    print(f"Mass matrix size: {chain.nv} x {chain.nv}")
     
     # Results storage
     results = []
@@ -169,25 +179,24 @@ def main():
         print(f"{'─' * 70}")
         
         # Generate data
-        q, qd, qdd, q_pin, qd_pin, qdd_pin = generate_random_state(chain, batch_size)
+        q, q_pin = generate_random_configuration(chain, batch_size)
         
         # Verify correctness on first batch
         if batch_size == BATCH_SIZES[0]:
             print("\nVerifying correctness...")
-            if not verify_correctness(rnea, q, qd, qdd, pin_model, pin_data, 
-                                     q_pin, qd_pin, qdd_pin):
+            if not verify_correctness(crba, q, pin_model, pin_data, q_pin):
                 print("ERROR: Correctness check failed!")
                 return
         
         # Benchmark Bard
         print("\nBenchmarking Bard...")
-        bard_times = benchmark_bard(rnea, q, qd, qdd, NUM_REPEATS, WARMUP_ITERS)
+        bard_times = benchmark_bard(crba, q, NUM_REPEATS, WARMUP_ITERS)
         bard_mean = np.mean(bard_times) * 1000  # Convert to ms
         bard_std = np.std(bard_times) * 1000
         
         # Benchmark Pinocchio
         print("Benchmarking Pinocchio...")
-        pin_times = benchmark_pinocchio(pin_model, pin_data, q_pin, qd_pin, qdd_pin, 
+        pin_times = benchmark_pinocchio(pin_model, pin_data, q_pin, 
                                        NUM_REPEATS, WARMUP_ITERS)
         pin_mean = np.mean(pin_times) * 1000  # Convert to ms
         pin_std = np.std(pin_times) * 1000
