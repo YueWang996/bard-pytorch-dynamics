@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bard"
-version = "0.1"
+version = "0.2"
 description = "Batched Articulated Robot Dynamics - Efficient robot kinematics and dynamics in PyTorch"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -40,35 +40,35 @@ classifiers = [
 ]
 
 dependencies = [
-    "torch>=2.7.1",
     "numpy>=2.3.2",
     "pyyaml>=6.0",
     "lxml>=6.0",
 ]
 
 [project.optional-dependencies]
+
+cpu = [
+  "torch>=2.1",
+  "torchvision>=0.16",
+]
+
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-benchmark>=4.0",
-    "pinocchio>=3.7",
     "matplotlib>=3.5.0",
 ]
+
 docs = [
     "sphinx>=5.0",
     "sphinx-rtd-theme>=1.2",
     "sphinx-autodoc-typehints>=1.23",
 ]
-examples = [
-]
-all = ["bard[dev,docs,examples]"]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/bard"
-Documentation = "https://bard.readthedocs.io"
-Repository = "https://github.com/yourusername/bard"
-Issues = "https://github.com/yourusername/bard/issues"
-Changelog = "https://github.com/yourusername/bard/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/YueWang996/bard"
+Repository = "https://github.com/YueWang996/bard"
+Issues = "https://github.com/YueWang996/bard/issues"
 
 [tool.setuptools]
 packages = ["bard"]
