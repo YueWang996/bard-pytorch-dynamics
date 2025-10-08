@@ -1,0 +1,73 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  # -------------------- JOB 1: Lint and Format Check --------------------
+  lint:
+    name: Lint & Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install black
+
+      - name: Run Black formatter check
+        run: black . --check
+
+  # ------------------ JOB 2: Build the documentation ------------------
+  build-docs:
+    name: Build Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[docs]
+
+      - name: Build Sphinx documentation
+        run: sphinx-build -b html docs/source docs/build/html
+
+      - name: Upload build artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/build/html
+
+  # ------------------ JOB 3: Deploy the documentation ------------------
+  deploy-docs:
+    name: Deploy Documentation
+    # This job requires the other two jobs to succeed first
+    needs: [lint, build-docs]
+    # Only run this job on pushes to the main branch
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    permissions:
+      pages: write
+      id-token: write
+    
+    environment:
+      name: github-pages
+      url: ${{ https://yuewang996.github.io/bard/ }}
+      
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
