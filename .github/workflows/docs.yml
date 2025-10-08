@@ -1,10 +1,9 @@
 name: Deploy Documentation to GitHub Pages
 
 on:
-  # Run workflow on pushes to the main branch
   push:
     branches:
-      - main  # Or master, depending on your branch name
+      - main # Or master
 
 permissions:
   contents: read
@@ -12,7 +11,8 @@ permissions:
   id-token: write
 
 jobs:
-  deploy:
+  # ------------------ JOB 1: Build the documentation ------------------
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -21,7 +21,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11' # Or your project's Python version
+          python-version: '3.11'
 
       - name: Install dependencies
         run: |
@@ -36,5 +36,23 @@ jobs:
         with:
           path: docs/build/html
 
+  # ------------------ JOB 2: Deploy the documentation ------------------
+  deploy:
+    # This job requires the 'build' job to succeed first
+    needs: build
+    
+    # Grant permissions for the deployment
+    permissions:
+      pages: write
+      id-token: write
+    
+    # This environment is managed by GitHub
+    environment:
+      name: github-pages
+      url: ${{ https://yuewang996.github.io/bard/ }}
+      
+    runs-on: ubuntu-latest
+    steps:
       - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4
