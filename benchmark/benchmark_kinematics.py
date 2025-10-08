@@ -170,7 +170,11 @@ def main():
 
     # Create ForwardKinematics object once with max batch size
     max_batch = max(BATCH_SIZES)
-    fk = ForwardKinematics(chain, max_batch_size=max_batch)
+    if DEVICE == "cuda":
+        fk = ForwardKinematics(chain, max_batch_size=max_batch, compile_enabled=True)
+    else:
+        fk = ForwardKinematics(chain, max_batch_size=max_batch, compile_enabled=False)
+    fk = fk.to(dtype=DTYPE, device=DEVICE)
 
     # Select test frame (end-effector)
     test_frame_name = chain.get_frame_names(exclude_fixed=True)[-1]

@@ -154,7 +154,11 @@ def main():
 
     # Create CRBA object once with max batch size
     max_batch = max(BATCH_SIZES)
-    crba = CRBA(chain, max_batch_size=max_batch)
+    if DEVICE == "cuda":
+        crba = CRBA(chain, max_batch_size=max_batch, compile_enabled=True)
+    else:
+        crba = CRBA(chain, max_batch_size=max_batch, compile_enabled=False)
+    crba = crba.to(dtype=DTYPE, device=DEVICE)
 
     print(f"\nCRBA object created with max_batch_size={max_batch}")
     print(f"Robot: {chain.n_joints} joints, {chain.n_nodes} nodes")

@@ -151,7 +151,11 @@ def main():
 
     # Create RNEA object once with max batch size
     max_batch = max(BATCH_SIZES)
-    rnea = RNEA(chain, max_batch_size=max_batch)
+    if DEVICE == "cuda":
+        rnea = RNEA(chain, max_batch_size=max_batch, compile_enabled=True)
+    else:
+        rnea = RNEA(chain, max_batch_size=max_batch, compile_enabled=False)
+    rnea = rnea.to(dtype=DTYPE, device=DEVICE)
 
     print(f"\nRNEA object created with max_batch_size={max_batch}")
     print(f"Robot: {chain.n_joints} joints, {chain.n_nodes} nodes")
