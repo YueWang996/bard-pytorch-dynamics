@@ -1,34 +1,37 @@
 API Reference
 =============
 
-This page provides the auto-generated API documentation for the core modules in ``bard``.
+This page provides the auto-generated API documentation for the core classes in ``bard``.
+
+Robot Chain
+-----------
+
+.. automodule:: bard.core.chain
+   :members: Chain
+
+Kinematics
+----------
+
+.. automodule:: bard.core.kinematics
+   :members: ForwardKinematics, SpatialAcceleration
+
+Jacobian
+--------
+
+.. automodule:: bard.core.jacobian
+   :members: Jacobian
+
+Dynamics
+--------
+
+.. automodule:: bard.core.dynamics
+   :members: RNEA, CRBA
 
 URDF Parsing
 ------------
 
 .. automodule:: bard.parsers.urdf
    :members:
-
-Kinematics
-----------
-
-.. automodule:: bard.core.kinematics
-   :members:
-
-.. automodule:: bard.core.jacobian
-   :members:
-
-Dynamics
---------
-
-.. automodule:: bard.core.dynamics
-   :members:
-
-Robot Chain
-------------
-
-.. automodule:: bard.core.chain
-   :members: Chain
 
 Data Structures
 ---------------
@@ -41,6 +44,3 @@ Data Structures
 
 .. automodule:: bard.structures.link
    :members: Link
-
-.. automodule:: bard.structures.visual
-   :members: Visual

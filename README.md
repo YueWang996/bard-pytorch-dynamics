@@ -1,109 +1,106 @@
 # bard: Batched Articulated Robot Dynamics
 
-[](https://www.google.com/search?q=https://github.com/YueWang996/bard/actions)
+[](https://www.google.com/search?q=https://github.com/YueWang996/bard)
 [](https://opensource.org/licenses/MIT)
 
-Efficient robot kinematics and dynamics in PyTorch, designed for batch processing and differentiability.
-
-`bard` is a lightweight, PyTorch-native library for rigid-body dynamics that leverages tensor operations to perform batched computations on the CPU or GPU. It provides a simple yet powerful API for loading robots from URDF files and analysing their motion using standard robotics algorithms.
+`bard` is a lightweight, PyTorch-native library for rigid-body dynamics that leverages tensor operations to perform efficient, batched computations on either the CPU or GPU. It provides a simple yet powerful API for loading robots from URDF files and analyzing their motion using standard robotics algorithms.
 
 The primary motivation behind `bard` is to provide a dynamics library that integrates seamlessly into modern machine learning workflows. By treating the robot's state and dynamics as a differentiable computation graph, it becomes an ideal tool for robotics research in areas like reinforcement learning, trajectory optimization, physics-informed learning, and system identification.
 
 ## Key Features ✨
 
-  * **PyTorch Native**: Built entirely on PyTorch for seamless integration.
+  * **PyTorch Native**: Built entirely on PyTorch for seamless integration with ML pipelines.
   * **Batch Processing**: All core functions operate on batches of robot states, enabling massive parallelism.
   * **GPU Acceleration**: Run dynamics computations on NVIDIA GPUs for significant speedups.
-  * **Differentiable**: The computation graph is differentiable, allowing for gradient-based optimization through the robot's dynamics.
+  * **Differentiable**: The entire computation graph is differentiable, allowing for gradient-based optimization through the robot's dynamics.
   * **Comprehensive Algorithms**:
       * Forward Kinematics
-      * Jacobian Calculation (in world and local frames)
-      * Inverse Dynamics (RNEA)
-      * Mass Matrix / Inertia Matrix (CRBA)
+      * Jacobian Calculation (in world and body frames)
+      * Inverse Dynamics (using RNEA)
+      * Mass Matrix / Inertia Matrix (using CRBA)
   * **Floating-Base Support**: Natively handles both fixed-base manipulators and floating-base systems like humanoids or quadrupeds.
   * **URDF Parsing**: Load robot models directly from URDF files.
 
 ## Installation
 
-Clone this repository and install the package in editable mode. This will install the core dependencies (`torch`, `numpy`).
+We strongly recommend using the **Conda** package manager to create an isolated environment. This simplifies the management of complex dependencies like PyTorch and Pinocchio (for testing).
+
+First, clone the repository:
 
 ```bash
 git clone https://github.com/YueWang996/bard.git
 cd bard
-pip install -e .
 ```
 
-To run the test suite, you must also install the development dependencies:
+Next, follow the instructions for your desired compute device.
+
+### Option 1: CUDA Installation (Recommended for GPU Acceleration)
+
+1.  Install a CUDA-enabled build of PyTorch by following the official instructions for your specific platform and CUDA version:
+    [https://pytorch.org/get-started/locally/](https://pytorch.org/get-started/locally/)
+
+2.  Once PyTorch is installed, install `bard`:
+
+    ```bash
+    pip install -e .
+    ```
+
+### Option 2: CPU-Only Installation
+
+If you do not have an NVIDIA GPU or do not require GPU acceleration, you can install the CPU-only version with a single command. This will automatically install a compatible, CPU-only version of PyTorch.
 
 ```bash
-# From the project root directory
-pip install -e .[dev]
+pip install -e ".[cpu]"
 ```
 
-## Quick Start
+### Upgrading from CPU to GPU
 
-Here is a simple example of performing batched forward kinematics and Jacobian calculations for a 2-link robot.
+If you initially installed the CPU-only version and want to switch to the CUDA version, you must manually reinstall PyTorch.
 
-```python
-import torch
-from bard.parsers.urdf import build_chain_from_urdf
-from bard.core.kinematics import calc_forward_kinematics
-from bard.core.jacobian import calc_jacobian
+1.  Uninstall the existing CPU-only PyTorch version:
 
-# A simple 2-link robot URDF
-urdf_string = """
-<robot name="simple_robot">
-    <link name="link1"/>
-    <link name="link2"/>
-    <link name="link3"/>
-    <joint name="joint1" type="revolute">
-        <parent link="link1"/>
-        <child link="link2"/>
-        <origin xyz="0 0 1"/>
-        <axis xyz="0 0 1"/>
-    </joint>
-    <joint name="joint2" type="revolute">
-        <parent link="link2"/>
-        <child link="link3"/>
-        <origin xyz="0 0 1"/>
-        <axis xyz="0 1 0"/>
-    </joint>
-</robot>
-"""
+    ```bash
+    pip uninstall -y torch torchvision torchaudio
+    ```
 
-# 1. Build the kinematic chain
-chain = build_chain_from_urdf(urdf_string).to(dtype=torch.float64, device="cpu")
+2.  Install the correct CUDA-enabled PyTorch build from the [official site](https://pytorch.org/get-started/locally/).
 
-# 2. Define a batch of joint configurations (N=100)
-N = 100
-q = torch.rand(N, chain.n_joints, dtype=torch.float64) * torch.pi
+3.  Reinstall `bard` to ensure all dependencies are correctly linked.
 
-# 3. Get the index of the end-effector frame
-ee_frame = "link3"
-ee_idx = chain.get_frame_indices(ee_frame).item()
+    ```bash
+    pip install -e . --force-reinstall
+    ```
 
-# 4. Perform batched forward kinematics
-transforms = calc_forward_kinematics(chain, q, ee_idx)
-ee_positions = transforms.get_matrix()[:, :3, 3] # Extract XYZ positions
+### Building the Documentation
 
-# 5. Perform batched Jacobian calculation
-J = calc_jacobian(chain, q, ee_idx, reference_frame="world")
+If you need to build the documentation locally, follow these steps.
 
-# Print the shapes to see the batched output
-print(f"Batch size: {N}")
-print(f"End-effector position shape: {ee_positions.shape}") # torch.Size([100, 3])
-print(f"Jacobian shape: {J.shape}")                       # torch.Size([100, 6, 2])
-```
+1.  **Install documentation dependencies** from the project's root directory:
+    ```bash
+    pip install -e .[docs]
+    ```
+2.  **Navigate to the `docs` folder and run the build command**:
+    ```bash
+    cd docs
+    sphinx-build -b html source build/html
+    ```
+3.  **View the documentation** by opening the `index.html` file located in the `docs/build/html/` directory in your web browser.
 
 ## Running Tests
 
-The library is rigorously tested against `pinocchio`. To run the full test suite, install the development dependencies and run `pytest`.
+The library is rigorously tested against `pinocchio` to ensure numerical accuracy. To run the full test suite, you will need to install the development dependencies, including `pinocchio`, which is best installed from `conda-forge`.
 
 ```bash
-# From the project root directory
-pip install -e .[dev]
+# First, install pinocchio
+conda install -c conda-forge pinocchio
+
+# From the project root directory, install dev dependencies
+pip install -e ".[dev]"
+
+# Run the test suite
 pytest
 ```
+
 
 ## Acknowledgements
 
