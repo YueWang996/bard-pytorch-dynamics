@@ -23,7 +23,7 @@ from bard.core.dynamics import RNEA, CRBA
 def compare_vectors(tau_bard, tau_pin, dtype, name="vector"):
     """
     Compare force/torque vectors with appropriate tolerances.
-    
+
     Args:
         tau_bard: Bard vector
         tau_pin: Pinocchio vector
@@ -33,21 +33,23 @@ def compare_vectors(tau_bard, tau_pin, dtype, name="vector"):
     warn_tol = 5e-4 if dtype == torch.float32 else 5e-6
     # Fail tolerance (20% buffer above warning)
     fail_tol = warn_tol * 1.2
-    
+
     max_diff = np.abs(tau_bard - tau_pin).max()
-    
+
     if max_diff >= fail_tol:
         # Hard fail
         assert False, f"{name} mismatch: max_diff={max_diff:.3e} > fail_tol={fail_tol:.1e}"
     elif max_diff >= warn_tol:
         # Warning but pass
-        warnings.warn(f"{name} close to tolerance: max_diff={max_diff:.3e}, warn_tol={warn_tol:.1e}")
+        warnings.warn(
+            f"{name} close to tolerance: max_diff={max_diff:.3e}, warn_tol={warn_tol:.1e}"
+        )
 
 
 def compare_matrices(M_bard, M_pin, dtype, name="matrix"):
     """
     Compare mass matrices with appropriate tolerances.
-    
+
     Args:
         M_bard: Bard matrix
         M_pin: Pinocchio matrix
@@ -59,19 +61,21 @@ def compare_matrices(M_bard, M_pin, dtype, name="matrix"):
 
     if M_pin.shape != M_bard.shape:
         raise AssertionError(f"Shape mismatch: Bard {M_bard.shape} vs Pinocchio {M_pin.shape}")
-    
+
     max_diff = np.abs(M_bard - M_pin).max()
     mean_diff = np.abs(M_bard - M_pin).mean()
-    
+
     if max_diff >= fail_tol:
         # Hard fail
         assert False, f"{name} mismatch: max_diff={max_diff:.3e} > fail_tol={fail_tol:.1e}"
     elif max_diff >= warn_tol:
         # Warning but pass
-        warnings.warn(f"{name} close to tolerance: max_diff={max_diff:.3e}, warn_tol={warn_tol:.1e}")
+        warnings.warn(
+            f"{name} close to tolerance: max_diff={max_diff:.3e}, warn_tol={warn_tol:.1e}"
+        )
 
 
-@pytest.mark.skipif(not hasattr(pin, 'buildModelFromXML'), reason="Pinocchio not available")
+@pytest.mark.skipif(not hasattr(pin, "buildModelFromXML"), reason="Pinocchio not available")
 class TestDynamics:
     """Test suite for dynamics algorithms (RNEA and CRBA) with both fixed-base and floating-base robots."""
 
@@ -89,54 +93,54 @@ class TestDynamics:
         """Verifies full RNEA (gravity + coriolis + inertia) for fixed-base robot."""
         bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model_fixed
-        
+
         # Create RNEA instance
         rnea = RNEA(bard_chain, max_batch_size=1, compile_enabled=False)
-        
+
         torch.manual_seed(1000)
         q = torch.rand(1, bard_chain.n_joints, device=device, dtype=dtype)
         qd = torch.randn(1, bard_chain.n_joints, device=device, dtype=dtype)
         qdd = torch.randn(1, bard_chain.n_joints, device=device, dtype=dtype)
-        
+
         # Bard RNEA
         tau_bard = rnea.calc(q, qd, qdd)[0].cpu().numpy()
-        
+
         # Pinocchio RNEA
         q_pin = q[0].cpu().numpy()
         qd_pin = qd[0].cpu().numpy()
         qdd_pin = qdd[0].cpu().numpy()
         tau_pin = pin.rnea(pin_model_obj, pin_data, q_pin, qd_pin, qdd_pin)
-        
+
         compare_vectors(tau_bard, tau_pin, dtype, name="Full RNEA")
 
     def test_fixed_base_rnea_components(self, urdf_string, pin_model_fixed, dtype, device):
         """Verifies RNEA component separation (gravity, coriolis, full) for fixed-base robot."""
         bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model_fixed
-        
+
         rnea = RNEA(bard_chain, max_batch_size=1, compile_enabled=False)
-        
+
         torch.manual_seed(1001)
         q = torch.rand(1, bard_chain.n_joints, device=device, dtype=dtype)
         qd = torch.randn(1, bard_chain.n_joints, device=device, dtype=dtype)
         qdd = torch.randn(1, bard_chain.n_joints, device=device, dtype=dtype)
-        
+
         q_pin = q[0].cpu().numpy()
         qd_pin = qd[0].cpu().numpy()
         qdd_pin = qdd[0].cpu().numpy()
-        
+
         # Gravity term: RNEA(q, 0, 0)
         zeros = torch.zeros_like(q)
         g_bard = rnea.calc(q, zeros, zeros)[0].cpu().numpy()
         g_pin = pin.computeGeneralizedGravity(pin_model_obj, pin_data, q_pin)
         compare_vectors(g_bard, g_pin, dtype, name="Gravity term")
-        
+
         # Coriolis term: RNEA(q, qd, 0, g=0)
         zero_gravity = torch.zeros(3, device=device, dtype=dtype)
         c_bard = rnea.calc(q, qd, zeros, gravity=zero_gravity)[0].cpu().numpy()
         c_pin = pin.computeCoriolisMatrix(pin_model_obj, pin_data, q_pin, qd_pin) @ qd_pin
         compare_vectors(c_bard, c_pin, dtype, name="Coriolis term")
-        
+
         # Full RNEA
         tau_bard = rnea.calc(q, qd, qdd)[0].cpu().numpy()
         tau_pin = pin.rnea(pin_model_obj, pin_data, q_pin, qd_pin, qdd_pin)
@@ -147,23 +151,26 @@ class TestDynamics:
         bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model_fixed
         batch_size = 20
-        
+
         rnea = RNEA(bard_chain, max_batch_size=batch_size, compile_enabled=False)
-        
+
         torch.manual_seed(1002)
         q_batch = torch.rand(batch_size, bard_chain.n_joints, device=device, dtype=dtype) * np.pi
         qd_batch = torch.randn(batch_size, bard_chain.n_joints, device=device, dtype=dtype)
         qdd_batch = torch.randn(batch_size, bard_chain.n_joints, device=device, dtype=dtype)
-        
+
         # Batched computation
         tau_bard_batch = rnea.calc(q_batch, qd_batch, qdd_batch).cpu().numpy()
-        
+
         # Verify each sample
         for i in range(batch_size):
-            tau_pin = pin.rnea(pin_model_obj, pin_data, 
-                              q_batch[i].cpu().numpy(), 
-                              qd_batch[i].cpu().numpy(), 
-                              qdd_batch[i].cpu().numpy())
+            tau_pin = pin.rnea(
+                pin_model_obj,
+                pin_data,
+                q_batch[i].cpu().numpy(),
+                qd_batch[i].cpu().numpy(),
+                qdd_batch[i].cpu().numpy(),
+            )
             compare_vectors(tau_bard_batch[i], tau_pin, dtype, name=f"RNEA batch[{i}]")
 
     # ========================================================================
@@ -174,18 +181,18 @@ class TestDynamics:
         """Verifies CRBA mass matrix computation for fixed-base robot."""
         bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model_fixed
-        
+
         crba = CRBA(bard_chain, max_batch_size=1, compile_enabled=False)
-        
+
         torch.manual_seed(1010)
         q = torch.rand(1, bard_chain.n_joints, device=device, dtype=dtype)
-        
+
         # Bard CRBA
         M_bard = crba.calc(q)[0].cpu().numpy()
-        
+
         # Pinocchio CRBA
         M_pin = pin.crba(pin_model_obj, pin_data, q[0].cpu().numpy())
-        
+
         compare_matrices(M_bard, M_pin, dtype, name="CRBA mass matrix")
 
     def test_fixed_base_crba_batched(self, urdf_string, pin_model_fixed, dtype, device):
@@ -193,15 +200,15 @@ class TestDynamics:
         bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model_fixed
         batch_size = 20
-        
+
         crba = CRBA(bard_chain, max_batch_size=batch_size, compile_enabled=False)
-        
+
         torch.manual_seed(1011)
         q_batch = torch.rand(batch_size, bard_chain.n_joints, device=device, dtype=dtype) * np.pi
-        
+
         # Batched computation
         M_bard_batch = crba.calc(q_batch).cpu().numpy()
-        
+
         # Verify each sample
         for i in range(batch_size):
             M_pin = pin.crba(pin_model_obj, pin_data, q_batch[i].cpu().numpy())
@@ -210,27 +217,28 @@ class TestDynamics:
     def test_fixed_base_rnea_crba_consistency(self, urdf_string, pin_model_fixed, dtype, device):
         """Verifies RNEA-CRBA consistency: M*qdd == RNEA(q, 0, qdd, g=0)."""
         bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
-        
+
         rnea = RNEA(bard_chain, max_batch_size=1, compile_enabled=False)
         crba = CRBA(bard_chain, max_batch_size=1, compile_enabled=False)
-        
+
         torch.manual_seed(1020)
         q = torch.rand(1, bard_chain.n_joints, device=device, dtype=dtype)
         qdd = torch.randn(1, bard_chain.n_joints, device=device, dtype=dtype)
-        
+
         # RNEA with zero velocity and gravity
         zeros = torch.zeros_like(q)
         zero_gravity = torch.zeros(3, device=device, dtype=dtype)
         tau_rnea = rnea.calc(q, zeros, qdd, gravity=zero_gravity)[0]
-        
+
         # CRBA
         M = crba.calc(q)[0]
         tau_crba = M @ qdd[0]
-        
+
         # Should match
         tol = 1e-5 if dtype == torch.float32 else 1e-6
-        assert torch.allclose(tau_rnea, tau_crba, atol=tol), \
-            f"RNEA-CRBA consistency check failed: max diff = {(tau_rnea - tau_crba).abs().max():.3e}"
+        assert torch.allclose(
+            tau_rnea, tau_crba, atol=tol
+        ), f"RNEA-CRBA consistency check failed: max diff = {(tau_rnea - tau_crba).abs().max():.3e}"
 
     # ========================================================================
     # Floating-Base RNEA Tests
@@ -244,76 +252,88 @@ class TestDynamics:
 
     def test_floating_base_rnea_full(self, urdf_string, pin_model_floating, dtype, device):
         """Verifies full RNEA for floating-base robot."""
-        bard_chain = build_chain_from_urdf(urdf_string, floating_base=True).to(dtype=dtype, device=device)
+        bard_chain = build_chain_from_urdf(urdf_string, floating_base=True).to(
+            dtype=dtype, device=device
+        )
         pin_model_obj, pin_data = pin_model_floating
-        
+
         rnea = RNEA(bard_chain, max_batch_size=1, compile_enabled=False)
-        
+
         torch.manual_seed(2000)
-        
+
         # Generate random state
         translations = torch.randn(1, 3, device=device, dtype=dtype)
         quats_wxyz = torch.randn(1, 4, device=device, dtype=dtype)
         quats_wxyz = quats_wxyz / torch.linalg.norm(quats_wxyz, dim=1, keepdim=True)
         q_joints = torch.rand(1, bard_chain.n_joints, device=device, dtype=dtype)
         q = torch.cat([translations, quats_wxyz, q_joints], dim=1)
-        
+
         qd = torch.randn(1, 6 + bard_chain.n_joints, device=device, dtype=dtype)
         qdd = torch.randn(1, 6 + bard_chain.n_joints, device=device, dtype=dtype)
-        
+
         # Bard RNEA
         tau_bard = rnea.calc(q, qd, qdd)[0].cpu().numpy()
-        
+
         # Convert to Pinocchio format
-        q_pin = np.concatenate([
-            translations[0].cpu().numpy(),
-            quats_wxyz[0, 1:].cpu().numpy(),
-            quats_wxyz[0, 0:1].cpu().numpy(),
-            q_joints[0].cpu().numpy()
-        ])
+        q_pin = np.concatenate(
+            [
+                translations[0].cpu().numpy(),
+                quats_wxyz[0, 1:].cpu().numpy(),
+                quats_wxyz[0, 0:1].cpu().numpy(),
+                q_joints[0].cpu().numpy(),
+            ]
+        )
         qd_pin = qd[0].cpu().numpy()
         qdd_pin = qdd[0].cpu().numpy()
-        
+
         # Pinocchio RNEA
         tau_pin = pin.rnea(pin_model_obj, pin_data, q_pin, qd_pin, qdd_pin)
-        
+
         compare_vectors(tau_bard, tau_pin, dtype, name="Floating-base full RNEA")
 
     def test_floating_base_rnea_batched(self, urdf_string, pin_model_floating, dtype, device):
         """Verifies batched RNEA for floating-base robot."""
-        bard_chain = build_chain_from_urdf(urdf_string, floating_base=True).to(dtype=dtype, device=device)
+        bard_chain = build_chain_from_urdf(urdf_string, floating_base=True).to(
+            dtype=dtype, device=device
+        )
         pin_model_obj, pin_data = pin_model_floating
         batch_size = 20
-        
+
         rnea = RNEA(bard_chain, max_batch_size=batch_size, compile_enabled=False)
-        
+
         torch.manual_seed(2001)
-        
+
         # Generate batched states
         translations = torch.randn(batch_size, 3, device=device, dtype=dtype)
         quats_wxyz = torch.randn(batch_size, 4, device=device, dtype=dtype)
         quats_wxyz = quats_wxyz / torch.linalg.norm(quats_wxyz, dim=1, keepdim=True)
         q_joints = torch.rand(batch_size, bard_chain.n_joints, device=device, dtype=dtype) * np.pi
         q_batch = torch.cat([translations, quats_wxyz, q_joints], dim=1)
-        
+
         qd_batch = torch.randn(batch_size, 6 + bard_chain.n_joints, device=device, dtype=dtype)
         qdd_batch = torch.randn(batch_size, 6 + bard_chain.n_joints, device=device, dtype=dtype)
-        
+
         # Batched computation
         tau_bard_batch = rnea.calc(q_batch, qd_batch, qdd_batch).cpu().numpy()
-        
+
         # Verify each sample
         for i in range(batch_size):
-            q_pin = np.concatenate([
-                translations[i].cpu().numpy(),
-                quats_wxyz[i, 1:].cpu().numpy(),
-                quats_wxyz[i, 0:1].cpu().numpy(),
-                q_joints[i].cpu().numpy()
-            ])
-            
-            tau_pin = pin.rnea(pin_model_obj, pin_data, q_pin, 
-                              qd_batch[i].cpu().numpy(), 
-                              qdd_batch[i].cpu().numpy())
+            q_pin = np.concatenate(
+                [
+                    translations[i].cpu().numpy(),
+                    quats_wxyz[i, 1:].cpu().numpy(),
+                    quats_wxyz[i, 0:1].cpu().numpy(),
+                    q_joints[i].cpu().numpy(),
+                ]
+            )
+
+            tau_pin = pin.rnea(
+                pin_model_obj,
+                pin_data,
+                q_pin,
+                qd_batch[i].cpu().numpy(),
+                qdd_batch[i].cpu().numpy(),
+            )
             compare_vectors(tau_bard_batch[i], tau_pin, dtype, name=f"Floating RNEA batch[{i}]")
 
     # ========================================================================
@@ -322,94 +342,107 @@ class TestDynamics:
 
     def test_floating_base_crba(self, urdf_string, pin_model_floating, dtype, device):
         """Verifies CRBA for floating-base robot."""
-        bard_chain = build_chain_from_urdf(urdf_string, floating_base=True).to(dtype=dtype, device=device)
+        bard_chain = build_chain_from_urdf(urdf_string, floating_base=True).to(
+            dtype=dtype, device=device
+        )
         pin_model_obj, pin_data = pin_model_floating
-        
+
         crba = CRBA(bard_chain, max_batch_size=1, compile_enabled=False)
-        
+
         torch.manual_seed(2010)
-        
+
         translations = torch.randn(1, 3, device=device, dtype=dtype)
         quats_wxyz = torch.randn(1, 4, device=device, dtype=dtype)
         quats_wxyz = quats_wxyz / torch.linalg.norm(quats_wxyz, dim=1, keepdim=True)
         q_joints = torch.rand(1, bard_chain.n_joints, device=device, dtype=dtype)
         q = torch.cat([translations, quats_wxyz, q_joints], dim=1)
-        
+
         # Bard CRBA
         M_bard = crba.calc(q)[0].cpu().numpy()
-        
+
         # Pinocchio CRBA
-        q_pin = np.concatenate([
-            translations[0].cpu().numpy(),
-            quats_wxyz[0, 1:].cpu().numpy(),
-            quats_wxyz[0, 0:1].cpu().numpy(),
-            q_joints[0].cpu().numpy()
-        ])
+        q_pin = np.concatenate(
+            [
+                translations[0].cpu().numpy(),
+                quats_wxyz[0, 1:].cpu().numpy(),
+                quats_wxyz[0, 0:1].cpu().numpy(),
+                q_joints[0].cpu().numpy(),
+            ]
+        )
         M_pin = pin.crba(pin_model_obj, pin_data, q_pin)
-        
+
         compare_matrices(M_bard, M_pin, dtype, name="Floating-base CRBA")
 
     def test_floating_base_crba_batched(self, urdf_string, pin_model_floating, dtype, device):
         """Verifies batched CRBA for floating-base robot."""
-        bard_chain = build_chain_from_urdf(urdf_string, floating_base=True).to(dtype=dtype, device=device)
+        bard_chain = build_chain_from_urdf(urdf_string, floating_base=True).to(
+            dtype=dtype, device=device
+        )
         pin_model_obj, pin_data = pin_model_floating
         batch_size = 20
-        
+
         crba = CRBA(bard_chain, max_batch_size=batch_size, compile_enabled=False)
-        
+
         torch.manual_seed(2011)
-        
+
         translations = torch.randn(batch_size, 3, device=device, dtype=dtype)
         quats_wxyz = torch.randn(batch_size, 4, device=device, dtype=dtype)
         quats_wxyz = quats_wxyz / torch.linalg.norm(quats_wxyz, dim=1, keepdim=True)
         q_joints = torch.rand(batch_size, bard_chain.n_joints, device=device, dtype=dtype) * np.pi
         q_batch = torch.cat([translations, quats_wxyz, q_joints], dim=1)
-        
+
         # Batched computation
         M_bard_batch = crba.calc(q_batch).cpu().numpy()
-        
+
         # Verify each sample
         for i in range(batch_size):
-            q_pin = np.concatenate([
-                translations[i].cpu().numpy(),
-                quats_wxyz[i, 1:].cpu().numpy(),
-                quats_wxyz[i, 0:1].cpu().numpy(),
-                q_joints[i].cpu().numpy()
-            ])
-            
+            q_pin = np.concatenate(
+                [
+                    translations[i].cpu().numpy(),
+                    quats_wxyz[i, 1:].cpu().numpy(),
+                    quats_wxyz[i, 0:1].cpu().numpy(),
+                    q_joints[i].cpu().numpy(),
+                ]
+            )
+
             M_pin = pin.crba(pin_model_obj, pin_data, q_pin)
             compare_matrices(M_bard_batch[i], M_pin, dtype, name=f"Floating CRBA batch[{i}]")
 
-    def test_floating_base_rnea_crba_consistency(self, urdf_string, pin_model_floating, dtype, device):
+    def test_floating_base_rnea_crba_consistency(
+        self, urdf_string, pin_model_floating, dtype, device
+    ):
         """Verifies RNEA-CRBA consistency for floating-base: M*qdd == RNEA(q, 0, qdd, g=0)."""
-        bard_chain = build_chain_from_urdf(urdf_string, floating_base=True).to(dtype=dtype, device=device)
-        
+        bard_chain = build_chain_from_urdf(urdf_string, floating_base=True).to(
+            dtype=dtype, device=device
+        )
+
         rnea = RNEA(bard_chain, max_batch_size=1, compile_enabled=False)
         crba = CRBA(bard_chain, max_batch_size=1, compile_enabled=False)
-        
+
         torch.manual_seed(2020)
-        
+
         translations = torch.randn(1, 3, device=device, dtype=dtype)
         quats_wxyz = torch.randn(1, 4, device=device, dtype=dtype)
         quats_wxyz = quats_wxyz / torch.linalg.norm(quats_wxyz, dim=1, keepdim=True)
         q_joints = torch.rand(1, bard_chain.n_joints, device=device, dtype=dtype)
         q = torch.cat([translations, quats_wxyz, q_joints], dim=1)
-        
+
         qdd = torch.randn(1, 6 + bard_chain.n_joints, device=device, dtype=dtype)
-        
+
         # RNEA with zero velocity and gravity
         zeros = torch.zeros(1, 6 + bard_chain.n_joints, device=device, dtype=dtype)
         zero_gravity = torch.zeros(3, device=device, dtype=dtype)
         tau_rnea = rnea.calc(q, zeros, qdd, gravity=zero_gravity)[0]
-        
+
         # CRBA
         M = crba.calc(q)[0]
         tau_crba = M @ qdd[0]
-        
+
         # Should match
         tol = 1e-5 if dtype == torch.float32 else 1e-6
-        assert torch.allclose(tau_rnea, tau_crba, atol=tol), \
-            f"Floating-base RNEA-CRBA consistency failed: max diff = {(tau_rnea - tau_crba).abs().max():.3e}"
+        assert torch.allclose(
+            tau_rnea, tau_crba, atol=tol
+        ), f"Floating-base RNEA-CRBA consistency failed: max diff = {(tau_rnea - tau_crba).abs().max():.3e}"
 
     # ========================================================================
     # Edge Cases and Stress Tests
@@ -418,16 +451,16 @@ class TestDynamics:
     def test_rnea_batch_size_validation(self, urdf_string, dtype, device):
         """Verifies that RNEA raises error when exceeding max_batch_size."""
         bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
-        
+
         rnea = RNEA(bard_chain, max_batch_size=5, compile_enabled=False)
-        
+
         # Should work
         q_ok = torch.rand(5, bard_chain.n_joints, device=device, dtype=dtype)
         qd_ok = torch.randn(5, bard_chain.n_joints, device=device, dtype=dtype)
         qdd_ok = torch.randn(5, bard_chain.n_joints, device=device, dtype=dtype)
         result = rnea.calc(q_ok, qd_ok, qdd_ok)
         assert result.shape[0] == 5, "Should process 5 samples"
-        
+
         # Should raise
         q_large = torch.rand(10, bard_chain.n_joints, device=device, dtype=dtype)
         qd_large = torch.randn(10, bard_chain.n_joints, device=device, dtype=dtype)
@@ -438,14 +471,14 @@ class TestDynamics:
     def test_crba_batch_size_validation(self, urdf_string, dtype, device):
         """Verifies that CRBA raises error when exceeding max_batch_size."""
         bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
-        
+
         crba = CRBA(bard_chain, max_batch_size=5, compile_enabled=False)
-        
+
         # Should work
         q_ok = torch.rand(5, bard_chain.n_joints, device=device, dtype=dtype)
         result = crba.calc(q_ok)
         assert result.shape[0] == 5, "Should process 5 samples"
-        
+
         # Should raise
         q_large = torch.rand(10, bard_chain.n_joints, device=device, dtype=dtype)
         with pytest.raises(ValueError, match="exceeds max_batch_size"):
@@ -454,36 +487,38 @@ class TestDynamics:
     def test_crba_symmetry(self, urdf_string, dtype, device):
         """Verifies that mass matrix is symmetric."""
         bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
-        
+
         crba = CRBA(bard_chain, max_batch_size=1, compile_enabled=False)
-        
+
         torch.manual_seed(3000)
         q = torch.rand(1, bard_chain.n_joints, device=device, dtype=dtype)
-        
+
         M = crba.calc(q)[0]
-        
+
         # Check symmetry
         tol = 1e-8 if dtype == torch.float64 else 1e-6
-        assert torch.allclose(M, M.T, atol=tol), \
-            f"Mass matrix is not symmetric: max asymmetry = {(M - M.T).abs().max():.3e}"
+        assert torch.allclose(
+            M, M.T, atol=tol
+        ), f"Mass matrix is not symmetric: max asymmetry = {(M - M.T).abs().max():.3e}"
 
     def test_crba_positive_definite(self, urdf_string, dtype, device):
         """Verifies that mass matrix is positive definite."""
         bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
-        
+
         crba = CRBA(bard_chain, max_batch_size=1, compile_enabled=False)
-        
+
         torch.manual_seed(3001)
         q = torch.rand(1, bard_chain.n_joints, device=device, dtype=dtype)
-        
+
         M = crba.calc(q)[0]
-        
+
         # Check positive definiteness via eigenvalues
         eigenvalues = torch.linalg.eigvalsh(M)
         min_eigenvalue = eigenvalues.min().item()
-        
-        assert min_eigenvalue > 0, \
-            f"Mass matrix is not positive definite: min eigenvalue = {min_eigenvalue:.3e}"
+
+        assert (
+            min_eigenvalue > 0
+        ), f"Mass matrix is not positive definite: min eigenvalue = {min_eigenvalue:.3e}"
 
     def test_rnea_with_compilation(self, urdf_string, pin_model_fixed, dtype, device):
         """Verifies that RNEA works with torch.compile enabled."""
