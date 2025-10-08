@@ -1,4 +1,16 @@
-from typing import List
+"""
+Class-based kinematic computations with pre-allocated memory.
+
+This module provides classes for core kinematic calculations:
+- ``ForwardKinematics``: Computes the world-frame pose of any link.
+- ``SpatialAcceleration``: Computes the spatial acceleration of any link.
+
+Both classes are designed for high performance by pre-allocating memory buffers,
+making them suitable for use in computationally intensive loops, such as in
+reinforcement learning or trajectory optimization.
+"""
+
+from typing import Dict, Optional, Any
 import torch
 import bard.transforms as tf
 from bard.core import chain
@@ -14,361 +26,536 @@ from .utils import (
     inv_homogeneous,
     motion_cross_product,
     spatial_adjoint,
-    normalize_joint_positions,
 )
 
 
-def calc_forward_kinematics(
-    chain: chain.Chain,
-    q: torch.Tensor,
-    frame_id: int,
-) -> tf.Transform3d:
-    """Calculates the forward kinematics for a specific frame.
+class ForwardKinematics:
+    """Forward kinematics computation with pre-allocated memory.
 
-    This function computes the world pose of a single target frame given the
-    robot's generalized coordinates. It supports batching for parallel computation.
+    This class computes the forward kinematics for a given frame (link) in the
+    robot's kinematic chain. It determines the 4x4 homogeneous transformation
+    matrix that represents the pose of the frame in the world coordinate system.
 
-    Args:
-        chain (bard.core.chain.Chain): The robot chain object.
-        q (torch.Tensor): The generalized coordinates of the robot.
-            Shape (B, nq) or (nq,), where B is the batch size and nq is the
-            number of configuration variables.
-        frame_id (int): The integer index of the target frame.
-
-    Returns:
-        bard.transforms.Transform3d: A Transform3d object containing the
-            batched (B, 4, 4) homogeneous transformation matrices representing
-            the world pose of the frame.
-    """
-    # Resolve frame index outside compiled region
-    tgt_idx = chain.get_frame_indices(frame_id).item() if isinstance(frame_id, str) else int(frame_id)
-    
-    # Extract path nodes (list of ints, not tensors)
-    path_nodes = [int(node.item()) for node in chain.parents_indices[tgt_idx]]
-    
-    # Pre-extract chain data
-    joint_indices = chain.joint_indices
-    joint_type_indices = chain.joint_type_indices
-    axes = chain.axes
-    
-    return _calc_forward_kinematics_compiled(
-        chain, q, path_nodes, joint_indices, joint_type_indices, axes
-    )
-
-
-@torch.compile
-def _calc_forward_kinematics_compiled(
-    chain,
-    q: torch.Tensor,
-    path_nodes: List[int],
-    joint_indices: torch.Tensor,
-    joint_type_indices: torch.Tensor,
-    axes: torch.Tensor,
-) -> tf.Transform3d:
-    """Compiled forward kinematics calculation."""
-    # ---- normalize inputs ----
-    q_in = normalize_joint_positions(chain, q)  # (B, D)
-    B, D = q_in.shape
-    dtype, device = chain.dtype, chain.device
-
-    # ---- split floating-base vs joint coordinates ----
-    has_fb = bool(getattr(chain, "has_floating_base", False))
-    nq_base = 7 if has_fb else 0
-    expect_with_base = (chain.n_joints + nq_base)
-
-    if has_fb and D == expect_with_base:
-        q_base = q_in[:, :7]          # [tx,ty,tz, qw,qx,qy,qz]
-        q_j    = q_in[:, 7:]
-    else:
-        # Treat as fixed-base inputs
-        q_base = None
-        q_j    = q_in
-
-    # ---- precompute joint motion transforms (vectorized over batch) ----
-    axes = axes.to(dtype=dtype, device=device)
-    axes = axes / axes.norm(dim=-1, keepdim=True).clamp_min(1e-12)
-    axes_exp = axes.unsqueeze(0).expand(B, -1, -1)
-    q_cast  = q_j.to(dtype=dtype)
-
-    T_rev = axis_and_angle_to_matrix_44(axes_exp, q_cast)  # (B, nJ, 4, 4)
-    T_pri = axis_and_d_to_pris_matrix(axes_exp, q_cast)    # (B, nJ, 4, 4)
-
-    # ---- seed WORLD transform with base pose (if present) ----
-    if q_base is not None:
-        # Build T_world<-base from [tx,ty,tz, qw,qx,qy,qz]
-        t = q_base[:, :3]
-        qwqxqyqz = q_base[:, 3:]
-        qwqxqyqz = qwqxqyqz / qwqxqyqz.norm(dim=-1, keepdim=True).clamp_min(1e-12)
-        qw, qx, qy, qz = qwqxqyqz.unbind(-1)
-
-        two = torch.tensor(2.0, dtype=dtype, device=device)
-        x2 = two * qx * qx; y2 = two * qy * qy; z2 = two * qz * qz
-        xy = two * qx * qy; xz = two * qx * qz; yz = two * qy * qz
-        wz = two * qw * qz; wy = two * qw * qy; wx = two * qw * qx
-
-        R_base_to_world = torch.empty(B, 3, 3, dtype=dtype, device=device)
-        R_base_to_world[:, 0, 0] = 1.0 - (y2 + z2)
-        R_base_to_world[:, 0, 1] = xy - wz
-        R_base_to_world[:, 0, 2] = xz + wy
-        R_base_to_world[:, 1, 0] = xy + wz
-        R_base_to_world[:, 1, 1] = 1.0 - (x2 + z2)
-        R_base_to_world[:, 1, 2] = yz - wx
-        R_base_to_world[:, 2, 0] = xz - wy
-        R_base_to_world[:, 2, 1] = yz + wx
-        R_base_to_world[:, 2, 2] = 1.0 - (x2 + y2)
-
-        T = torch.zeros(B, 4, 4, dtype=dtype, device=device)
-        T[:, :3, :3] = R_base_to_world
-        T[:, :3,  3] = t
-        T[:,  3,  3] = 1.0
-    else:
-        T = identity_transform(B, dtype, device).clone()
-
-    # ---- accumulate WORLD transform along the path root->target ----
-    for node_idx_int in path_nodes:
-        # parent -> joint origin
-        T_joint = as_batched_transform(chain.joint_offsets[node_idx_int], B, dtype, device)
-
-        # joint motion in JOINT frame
-        j_idx  = joint_indices[node_idx_int]
-        j_type = joint_type_indices[node_idx_int]
-        
-        if j_type == Joint.TYPES.index('revolute'):
-            T_motion = T_rev[:, j_idx]
-        elif j_type == Joint.TYPES.index('prismatic'):
-            T_motion = T_pri[:, j_idx]
-        elif j_type == Joint.TYPES.index('fixed'):
-            T_motion = identity_transform(B, dtype, device)
-        else:
-            raise NotImplementedError(f"Unsupported joint type index: {j_type}")
-
-        # joint -> child link
-        T_link = as_batched_transform(chain.link_offsets[node_idx_int], B, dtype, device)
-
-        # compose this node (WORLD <- parent) ∘ joint ∘ motion ∘ link
-        T = T @ T_joint @ T_motion @ T_link
-
-        # (optional) small numeric guard: reproject SO(3)
-        R = T[:, :3, :3]
-        U, _, Vh = torch.linalg.svd(R)
-        M = U @ Vh
-        det = torch.det(M)
-        D = torch.eye(3, dtype=dtype, device=device).unsqueeze(0).expand(B, -1, -1).clone()
-        D[:, 2, 2] = torch.where(det >= 0, torch.ones_like(det), -torch.ones_like(det))
-        T[:, :3, :3] = U @ D @ Vh
-
-    # ---- return WORLD pose of the requested frame ----
-    return tf.Transform3d(matrix=T)
-
-
-def end_effector_acceleration(
-    chain,
-    q: torch.Tensor,
-    qd: torch.Tensor,
-    qdd: torch.Tensor,
-    frame_name: str,
-    reference_frame: str = "local",
-):
-    """Computes the classical spatial acceleration of a frame.
-
-    This function implements the forward pass of the Recursive Newton-Euler
-    Algorithm (RNEA) to determine the acceleration of a body, including
-    Coriolis and centrifugal effects.
+    To achieve high performance, this class avoids runtime memory allocation by
+    pre-computing static data. An instance should be created once per robot chain
+    and reused for all subsequent computations.
 
     Args:
-        chain (bard.core.chain.Chain): The robot chain object.
-        q (torch.Tensor): Generalized coordinates (position). Shape (B, nq) or (nq,).
-        qd (torch.Tensor): Generalized velocities. Shape (B, nv) or (nv,).
-        qdd (torch.Tensor): Generalized accelerations. Shape (B, nv) or (nv,).
-        frame_name (Union[str, int]): The name or integer index of the target frame.
-        reference_frame (str, optional): The frame of reference for the output
-            acceleration. Can be "world" or "local". Defaults to "local".
+        chain (chain.Chain): The robot's kinematic chain definition.
+        max_batch_size (int, optional): The maximum batch size the instance will
+            support. Defaults to 1024.
+        compile_enabled (bool, optional): If ``True``, the core computation
+            will be JIT-compiled with ``torch.compile``. Defaults to ``False``.
+        compile_kwargs (Dict[str, Any], optional): A dictionary of keyword
+            arguments to pass to ``torch.compile``. Defaults to ``None``.
 
-    Returns:
-        torch.Tensor: The spatial acceleration vector [linear; angular] of
-            shape (B, 6).
+    Attributes:
+        chain (chain.Chain): The robot kinematic chain.
+        max_batch_size (int): The maximum supported batch size.
+        dtype (torch.dtype): The data type of the tensors.
+        device (torch.device): The device where tensors are stored.
+
+    Example:
+        .. code-block:: python
+
+            # Create an FK instance once
+            fk = ForwardKinematics(robot_chain, max_batch_size=128)
+            eef_frame_id = robot_chain.get_frame_id("end_effector_link")
+
+            # Use in a loop for efficient computation
+            for q in data_loader:
+                T_world_eef = fk.calc(q, eef_frame_id)
+                position = T_world_eef[:, :3, 3]
+                # ... use the computed pose ...
     """
-    # Extract tree structure ONCE outside compiled region
-    parent = chain.parent_array.tolist()
-    n_nodes = len(parent)
-    children = [
-        chain.children_array[i, :chain.children_count[i]].tolist() 
-        for i in range(n_nodes)
-    ]
-    topo_order = chain.topo_order  # Pre-computed topological order
     
-    # Resolve frame index
-    node_idx = chain.get_frame_indices(frame_name).item() if isinstance(frame_name, str) else int(frame_name)
-    
-    # Pre-extract chain data
-    joint_indices = chain.joint_indices
-    joint_type_indices = chain.joint_type_indices
-    axes = chain.axes
-    
-    return _end_effector_acceleration_compiled(
-        chain, q, qd, qdd, node_idx, reference_frame,
-        parent, children, topo_order, joint_indices, joint_type_indices, axes
-    )
-
-
-@torch.compile
-def _end_effector_acceleration_compiled(
-    chain,
-    q: torch.Tensor,
-    qd: torch.Tensor,
-    qdd: torch.Tensor,
-    node_idx: int,
-    reference_frame: str,
-    parent: List[int],
-    children: List[List[int]],
-    topo_order: List[int],  # Pre-computed, no while loop needed!
-    joint_indices: torch.Tensor,
-    joint_type_indices: torch.Tensor,
-    axes: torch.Tensor,
-):
-    """Compiled end-effector acceleration calculation."""
-    dtype, device = chain.dtype, chain.device
-
-    # Normalize inputs
-    if hasattr(chain, "ensure_tensor"):
-        q_in = chain.ensure_tensor(q)
-        qd_in = chain.ensure_tensor(qd)
-        qdd_in = chain.ensure_tensor(qdd)
-    else:
-        q_in = torch.as_tensor(q, dtype=dtype, device=device)
-        qd_in = torch.as_tensor(qd, dtype=dtype, device=device)
-        qdd_in = torch.as_tensor(qdd, dtype=dtype, device=device)
-    
-    if q_in.ndim == 1: q_in = q_in.unsqueeze(0)
-    if qd_in.ndim == 1: qd_in = qd_in.unsqueeze(0)
-    if qdd_in.ndim == 1: qdd_in = qdd_in.unsqueeze(0)
-
-    B = q_in.shape[0]
-    has_fb = bool(getattr(chain, "has_floating_base", False))
-
-    # Split base and joint components
-    if has_fb:
-        q_base, q_j = q_in[:, :7], q_in[:, 7:]
-        v_base, v_j = qd_in[:, :6], qd_in[:, 6:]
-        a_base, a_j = qdd_in[:, :6], qdd_in[:, 6:]
-    else:
-        q_base = v_base = a_base = None
-        q_j, v_j, a_j = q_in, qd_in, qdd_in
-
-    # World spatial acceleration (gravity disabled)
-    a_world0 = torch.zeros((B, 6), dtype=dtype, device=device)
-
-    # Tree topology - USE PRE-COMPUTED ORDER (no while loop!)
-    n_nodes = len(parent)
-
-    # Precompute joint transforms
-    axes_raw = axes.to(dtype=dtype, device=device)
-    axes_norm = axes_raw / axes_raw.norm(dim=-1, keepdim=True).clamp_min(1e-12)
-    axes_exp = axes_norm.unsqueeze(0).expand(B, -1, -1)
-    T_rev = axis_and_angle_to_matrix_44(axes_exp, q_j)
-    T_pri = axis_and_d_to_pris_matrix(axes_exp, q_j)
-
-    # Storage
-    Xup = [None] * n_nodes
-    S = [torch.zeros((B, 6), dtype=dtype, device=device) for _ in range(n_nodes)]
-    v = [torch.zeros((B, 6), dtype=dtype, device=device) for _ in range(n_nodes)]
-    a = [torch.zeros((B, 6), dtype=dtype, device=device) for _ in range(n_nodes)]
-    T_world_to_node = [None] * n_nodes
-    I44 = identity_transform(B, dtype, device)
-
-    # Build base transform if floating
-    if has_fb and q_base is not None:
-        t = q_base[:, :3]
-        qwqxqyqz = q_base[:, 3:]
-        qwqxqyqz = qwqxqyqz / qwqxqyqz.norm(dim=-1, keepdim=True).clamp_min(1e-12)
-        qw, qx, qy, qz = qwqxqyqz.unbind(-1)
+    def __init__(self, chain: chain.Chain, max_batch_size: int = 1024,
+                 compile_enabled: Optional[bool] = False,
+                 compile_kwargs: Optional[Dict[str, Any]] = None):
+        self.chain = chain
+        self.max_batch_size = max_batch_size
+        self.dtype = chain.dtype
+        self.device = chain.device
         
-        two = torch.tensor(2.0, dtype=dtype, device=device)
-        x2, y2, z2 = two * qx * qx, two * qy * qy, two * qz * qz
-        xy, xz, yz = two * qx * qy, two * qx * qz, two * qy * qz
-        wz, wy, wx = two * qw * qz, two * qw * qy, two * qw * qx
+        self.n_nodes = chain.n_nodes
+        self.n_joints = chain.n_joints
+        self.is_floating_base = chain.has_floating_base
         
-        R = torch.empty(B, 3, 3, dtype=dtype, device=device)
-        R[:, 0, 0], R[:, 0, 1], R[:, 0, 2] = 1.0 - (y2 + z2), xy - wz, xz + wy
-        R[:, 1, 0], R[:, 1, 1], R[:, 1, 2] = xy + wz, 1.0 - (x2 + z2), yz - wx
-        R[:, 2, 0], R[:, 2, 1], R[:, 2, 2] = xz - wy, yz + wx, 1.0 - (x2 + y2)
+        # Pre-compute normalized axes (same as jacobian_cached.py)
+        self.axes_norm = chain.axes / chain.axes.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+
+        # Conditional compilation setup
+        self._compile_enabled = compile_enabled
+        self._compile_kwargs = compile_kwargs if compile_kwargs is not None else {}
+        self._setup_calc_callable()
+
+    def enable_compilation(self, enabled: bool = True, **compile_kwargs):
+        """Enable or disable ``torch.compile`` for the core computation.
+
+        Args:
+            enabled (bool, optional): If ``True``, compilation is enabled.
+                Defaults to ``True``.
+            **compile_kwargs: Additional keyword arguments to pass to
+                ``torch.compile``.
+        """
+        self._compile_enabled = enabled
+        if compile_kwargs:
+            self._compile_kwargs.update(compile_kwargs)
+        self._setup_calc_callable()
         
-        T_world_to_base = torch.zeros(B, 4, 4, dtype=dtype, device=device)
-        T_world_to_base[:, :3, :3] = R
-        T_world_to_base[:, :3, 3] = t
-        T_world_to_base[:, 3, 3] = 1.0
-    else:
-        T_world_to_base = I44
+    def to(self, dtype: Optional[torch.dtype] = None, device: Optional[torch.device] = None):
+        """Move all internal buffers to a specified dtype and/or device.
 
-    # Forward pass - USE PRE-COMPUTED TOPOLOGICAL ORDER
-    for i in topo_order:
-        j_idx = joint_indices[i]
-        j_type = joint_type_indices[i]
+        This is an in-place operation.
 
-        # Joint and link offsets
-        T_joint = as_batched_transform(chain.joint_offsets[i], B, dtype, device)
-        T_link = as_batched_transform(chain.link_offsets[i], B, dtype, device)
+        Args:
+            dtype (torch.dtype, optional): The target data type. Defaults to ``None``.
+            device (torch.device, optional): The target device. Defaults to ``None``.
 
-        # Joint motion
-        if j_type == Joint.TYPES.index('revolute'):
-            T_motion = T_rev[:, j_idx]
-        elif j_type == Joint.TYPES.index('prismatic'):
-            T_motion = T_pri[:, j_idx]
-        elif j_type == Joint.TYPES.index('fixed'):
-            T_motion = I44
+        Returns:
+            ForwardKinematics: The instance itself for method chaining.
+        """
+        if dtype is not None:
+            self.dtype = dtype
+        if device is not None:
+            self.device = device
+        
+        self.axes_norm = self.axes_norm.to(dtype=self.dtype, device=self.device)
+
+        self._setup_calc_callable()
+        
+        return self
+    
+    def calc(
+        self,
+        q: torch.Tensor,
+        frame_id: int,
+    ) -> torch.Tensor:
+        """Compute forward kinematics for a specific frame.
+
+        Args:
+            q (torch.Tensor): A batch of generalized positions.
+                - For fixed-base robots, shape is ``(B, n_joints)``.
+                - For floating-base robots, shape is ``(B, 7 + n_joints)``,
+                  where the first 7 elements are ``[tx, ty, tz, qw, qx, qy, qz]``.
+            frame_id (int): The integer index of the target frame (link).
+
+        Returns:
+            torch.Tensor: A batch of ``(B, 4, 4)`` homogeneous transformation
+            matrices representing the world-frame pose of the target frame.
+
+        Raises:
+            ValueError: If the input batch size ``B`` exceeds ``self.max_batch_size``.
+        """
+        batch_size = q.shape[0]
+        if batch_size > self.max_batch_size:
+            raise ValueError(
+                f"Batch size {batch_size} exceeds max_batch_size {self.max_batch_size}..."
+            )
+        return self._calc_callable(q, frame_id)
+
+    def _setup_calc_callable(self):
+        fn = self._calc_impl
+        if self._compile_enabled:
+            fn = torch.compile(fn, **self._compile_kwargs)
+        self._calc_callable = fn
+
+    def _calc_impl(
+        self,
+        q: torch.Tensor,
+        frame_id: int,
+    ) -> torch.Tensor:
+        batch_size = q.shape[0]
+        
+        # Get path from root to target frame as Python list
+        path_nodes = self.chain.parents_indices_list[frame_id]
+        
+        # Split configuration
+        if self.is_floating_base:
+            q_base = q[:, :7]
+            q_joints = q[:, 7:]
         else:
-            raise NotImplementedError(f"Unsupported joint type: {j_type}")
+            q_base = None
+            q_joints = q
 
-        # Parent -> child transform
-        T_parent_to_child = T_joint @ T_motion @ T_link
-        Xup_i = spatial_adjoint(inv_homogeneous(T_parent_to_child))
-        Xup[i] = Xup_i
+        # Pre-compute per-joint motion transforms
+        axes_expanded = self.axes_norm.unsqueeze(0).expand(batch_size, -1, -1)
+        T_revolute = axis_and_angle_to_matrix_44(axes_expanded, q_joints)
+        T_prismatic = axis_and_d_to_pris_matrix(axes_expanded, q_joints)
 
-        # Joint subspace in child frame
-        if j_type in [Joint.TYPES.index('revolute'), Joint.TYPES.index('prismatic')]:
-            axis_local = axes_norm[j_idx].view(1, 3).expand(B, -1)
-            twist_joint = torch.zeros((B, 6), dtype=dtype, device=device)
-            if j_type == Joint.TYPES.index('revolute'):
-                twist_joint[:, 3:] = axis_local
+        I44 = identity_transform(batch_size, self.dtype, self.device)
+
+        # Initialize world transform with base pose (if floating)
+        if self.is_floating_base and q_base is not None:
+            t = q_base[:, :3]
+            qwqxqyqz = q_base[:, 3:]
+            qwqxqyqz = qwqxqyqz / qwqxqyqz.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+            qw, qx, qy, qz = qwqxqyqz.unbind(-1)
+
+            two = torch.tensor(2.0, dtype=self.dtype, device=self.device)
+            x2, y2, z2 = two * qx * qx, two * qy * qy, two * qz * qz
+            xy, xz, yz = two * qx * qy, two * qx * qz, two * qy * qz
+            wz, wy, wx = two * qw * qz, two * qw * qy, two * qw * qx
+
+            R_base_to_world = torch.empty(batch_size, 3, 3, dtype=self.dtype, device=self.device)
+            R_base_to_world[:, 0, 0] = 1.0 - (y2 + z2)
+            R_base_to_world[:, 0, 1] = xy - wz
+            R_base_to_world[:, 0, 2] = xz + wy
+            R_base_to_world[:, 1, 0] = xy + wz
+            R_base_to_world[:, 1, 1] = 1.0 - (x2 + z2)
+            R_base_to_world[:, 1, 2] = yz - wx
+            R_base_to_world[:, 2, 0] = xz - wy
+            R_base_to_world[:, 2, 1] = yz + wx
+            R_base_to_world[:, 2, 2] = 1.0 - (x2 + y2)
+
+            T_world_to_current = torch.zeros(batch_size, 4, 4, dtype=self.dtype, device=self.device)
+            T_world_to_current[:, :3, :3] = R_base_to_world
+            T_world_to_current[:, :3, 3] = t
+            T_world_to_current[:, 3, 3] = 1.0
+        else:
+            T_world_to_current = I44.clone()
+
+        # Forward pass: accumulate transforms along path
+        for node_idx in path_nodes:
+            joint_idx = self.chain.joint_indices_list[node_idx]
+            joint_type_idx = self.chain.joint_type_indices_list[node_idx]
+
+            T_joint_offset = as_batched_transform(
+                self.chain.joint_offsets[node_idx], batch_size, self.dtype, self.device
+            )
+
+            # Select motion transform based on joint type
+            is_revolute = (joint_type_idx == Joint.TYPES.index('revolute'))
+            is_prismatic = (joint_type_idx == Joint.TYPES.index('prismatic'))
+            
+            if is_revolute:
+                T_motion = T_revolute[:, joint_idx]
+            elif is_prismatic:
+                T_motion = T_prismatic[:, joint_idx]
+            else:  # fixed
+                T_motion = I44
+
+            T_link_offset = as_batched_transform(
+                self.chain.link_offsets[node_idx], batch_size, self.dtype, self.device
+            )
+
+            # Accumulate transform
+            T_world_to_current = T_world_to_current @ T_joint_offset @ T_motion @ T_link_offset
+
+        return T_world_to_current
+
+
+class SpatialAcceleration:
+    """End-effector spatial acceleration computation with pre-allocated memory.
+
+    This class implements the forward pass of the RNEA algorithm to compute the
+    6D spatial acceleration (linear and angular) of a specific frame. It is
+    essential for tasks requiring acceleration-level analysis, such as operational
+    space control.
+
+    All necessary buffers are pre-allocated for maximum performance, making it
+    efficient for use in control loops or other performance-sensitive code.
+
+    Args:
+        chain (chain.Chain): The robot's kinematic chain definition.
+        max_batch_size (int, optional): The maximum batch size the instance will
+            support. Defaults to 1024.
+        compile_enabled (bool, optional): If ``True``, the core computation
+            will be JIT-compiled with ``torch.compile``. Defaults to ``False``.
+        compile_kwargs (Dict[str, Any], optional): A dictionary of keyword
+            arguments to pass to ``torch.compile``. Defaults to ``{"mode": "reduce-overhead"}``.
+
+    Attributes:
+        chain (chain.Chain): The robot kinematic chain.
+        max_batch_size (int): The maximum supported batch size.
+        dtype (torch.dtype): The data type of the tensors.
+        device (torch.device): The device where tensors are stored.
+
+    Example:
+        .. code-block:: python
+
+            # Create an acceleration instance once
+            accel = SpatialAcceleration(robot_chain, max_batch_size=128)
+            eef_frame_id = robot_chain.get_frame_id("end_effector_link")
+
+            # Use in a loop
+            for q, qd, qdd in data_loader:
+                a_world = accel.calc(q, qd, qdd, eef_frame_id, reference_frame="world")
+                linear_accel = a_world[:, :3]
+                # ... use the computed acceleration ...
+    """
+    def __init__(self, chain: chain.Chain, max_batch_size: int = 1024,
+                 compile_enabled: Optional[bool] = False,
+                 compile_kwargs: Optional[Dict[str, Any]] = {"mode": "reduce-overhead"}):
+        self.chain = chain
+        self.max_batch_size = max_batch_size
+        self.dtype = chain.dtype
+        self.device = chain.device
+        
+        self.n_nodes = chain.n_nodes
+        self.n_joints = chain.n_joints
+        self.is_floating_base = chain.has_floating_base
+        
+        # Pre-allocate all buffers
+        self.Xup = torch.zeros(self.n_nodes, max_batch_size, 6, 6, dtype=self.dtype, device=self.device)
+        self.S = torch.zeros(self.n_nodes, max_batch_size, 6, dtype=self.dtype, device=self.device)
+        self.v = torch.zeros(self.n_nodes, max_batch_size, 6, dtype=self.dtype, device=self.device)
+        self.a = torch.zeros(self.n_nodes, max_batch_size, 6, dtype=self.dtype, device=self.device)
+        
+        # Pre-allocate transform storage (avoid Python list mutation in compiled code)
+        self.T_world_to_node = torch.zeros(
+            self.n_nodes, max_batch_size, 4, 4, dtype=self.dtype, device=self.device
+        )
+        
+        # Pre-compute normalized axes (same as jacobian_cached.py)
+        self.axes_norm = chain.axes / chain.axes.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+
+        # Conditional compilation setup
+        self._compile_enabled = compile_enabled
+        self._compile_kwargs = compile_kwargs if compile_kwargs is not None else {}
+        self._setup_calc_callable()
+
+    def enable_compilation(self, enabled: bool = True, **compile_kwargs):
+        """Enable or disable ``torch.compile`` for the core computation.
+
+        Args:
+            enabled (bool, optional): If ``True``, compilation is enabled.
+                Defaults to ``True``.
+            **compile_kwargs: Additional keyword arguments to pass to
+                ``torch.compile``.
+        """
+        self._compile_enabled = enabled
+        if compile_kwargs:
+            self._compile_kwargs.update(compile_kwargs)
+        self._setup_calc_callable()
+
+    def to(self, dtype: Optional[torch.dtype] = None, device: Optional[torch.device] = None):
+        """Move all internal buffers to a specified dtype and/or device.
+
+        This is an in-place operation.
+
+        Args:
+            dtype (torch.dtype, optional): The target data type. Defaults to ``None``.
+            device (torch.device, optional): The target device. Defaults to ``None``.
+
+        Returns:
+            SpatialAcceleration: The instance itself for method chaining.
+        """
+        if dtype is not None:
+            self.dtype = dtype
+        if device is not None:
+            self.device = device
+        
+        self.Xup = self.Xup.to(dtype=self.dtype, device=self.device)
+        self.S = self.S.to(dtype=self.dtype, device=self.device)
+        self.v = self.v.to(dtype=self.dtype, device=self.device)
+        self.a = self.a.to(dtype=self.dtype, device=self.device)
+        self.T_world_to_node = self.T_world_to_node.to(dtype=self.dtype, device=self.device)
+        self.axes_norm = self.axes_norm.to(dtype=self.dtype, device=self.device)
+
+        self._setup_calc_callable()
+        
+        return self
+    
+    def calc(
+        self,
+        q: torch.Tensor,
+        qd: torch.Tensor,
+        qdd: torch.Tensor,
+        frame_id: int,
+        reference_frame: str = "local",
+    ) -> torch.Tensor:
+        """Compute the spatial acceleration of a frame.
+
+        Args:
+            q (torch.Tensor): A batch of generalized positions.
+                - For fixed-base robots, shape is ``(B, n_joints)``.
+                - For floating-base robots, shape is ``(B, 7 + n_joints)``.
+            qd (torch.Tensor): A batch of generalized velocities.
+                - For fixed-base robots, shape is ``(B, n_joints)``.
+                - For floating-base robots, shape is ``(B, 6 + n_joints)``.
+            qdd (torch.Tensor): A batch of generalized accelerations, with the
+                same shape as ``qd``.
+            frame_id (int): The integer index of the target frame.
+            reference_frame (str, optional): The frame of reference for the
+                output acceleration. Can be ``"world"`` or ``"local"`` (the frame's
+                own coordinate system). Defaults to ``"local"``.
+
+        Returns:
+            torch.Tensor: The spatial acceleration ``[linear; angular]`` of the
+            target frame, with shape ``(B, 6)``.
+
+        Raises:
+            ValueError: If the input batch size ``B`` exceeds ``self.max_batch_size``.
+        """
+        batch_size = q.shape[0]
+        if batch_size > self.max_batch_size:
+            raise ValueError(
+                f"Batch size {batch_size} exceeds max_batch_size {self.max_batch_size}..."
+            )
+        return self._calc_callable(q, qd, qdd, frame_id, reference_frame)
+    
+    def _setup_calc_callable(self):
+        fn = self._calc_impl
+        if self._compile_enabled:
+            fn = torch.compile(fn, **self._compile_kwargs)
+        self._calc_callable = fn
+
+    def _calc_impl(
+        self,
+        q: torch.Tensor,
+        qd: torch.Tensor,
+        qdd: torch.Tensor,
+        frame_id: int,
+        reference_frame: str = "local",
+    ) -> torch.Tensor:
+        batch_size = q.shape[0]
+        
+        # Get sliced views of pre-allocated buffers
+        Xup = self.Xup[:, :batch_size, :, :]
+        S = self.S[:, :batch_size, :]
+        v = self.v[:, :batch_size, :]
+        a = self.a[:, :batch_size, :]
+        T_world_to_node = self.T_world_to_node[:, :batch_size, :, :]
+        
+        # Zero out buffers
+        S.zero_()
+        v.zero_()
+        a.zero_()
+        
+        # Split base and joint components
+        if self.is_floating_base:
+            q_base = q[:, :7]
+            q_joints = q[:, 7:]
+            v_base = qd[:, :6]
+            v_joints = qd[:, 6:]
+            a_base = qdd[:, :6]
+            a_joints = qdd[:, 6:]
+        else:
+            q_base = v_base = a_base = None
+            q_joints = q
+            v_joints = qd
+            a_joints = qdd
+
+        # World spatial acceleration (gravity disabled for pure kinematic acceleration)
+        a_world0 = torch.zeros((batch_size, 6), dtype=self.dtype, device=self.device)
+
+        # Pre-compute joint transforms
+        axes_expanded = self.axes_norm.unsqueeze(0).expand(batch_size, -1, -1)
+        T_revolute = axis_and_angle_to_matrix_44(axes_expanded, q_joints)
+        T_prismatic = axis_and_d_to_pris_matrix(axes_expanded, q_joints)
+
+        I44 = identity_transform(batch_size, self.dtype, self.device)
+
+        # Build base transform if floating
+        if self.is_floating_base and q_base is not None:
+            t = q_base[:, :3]
+            qwqxqyqz = q_base[:, 3:]
+            qwqxqyqz = qwqxqyqz / qwqxqyqz.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+            qw, qx, qy, qz = qwqxqyqz.unbind(-1)
+
+            two = torch.tensor(2.0, dtype=self.dtype, device=self.device)
+            x2, y2, z2 = two * qx * qx, two * qy * qy, two * qz * qz
+            xy, xz, yz = two * qx * qy, two * qx * qz, two * qy * qz
+            wz, wy, wx = two * qw * qz, two * qw * qy, two * qw * qx
+
+            R = torch.empty(batch_size, 3, 3, dtype=self.dtype, device=self.device)
+            R[:, 0, 0] = 1.0 - (y2 + z2)
+            R[:, 0, 1] = xy - wz
+            R[:, 0, 2] = xz + wy
+            R[:, 1, 0] = xy + wz
+            R[:, 1, 1] = 1.0 - (x2 + z2)
+            R[:, 1, 2] = yz - wx
+            R[:, 2, 0] = xz - wy
+            R[:, 2, 1] = yz + wx
+            R[:, 2, 2] = 1.0 - (x2 + y2)
+
+            T_world_to_base = torch.zeros(batch_size, 4, 4, dtype=self.dtype, device=self.device)
+            T_world_to_base[:, :3, :3] = R
+            T_world_to_base[:, :3, 3] = t
+            T_world_to_base[:, 3, 3] = 1.0
+        else:
+            T_world_to_base = I44
+
+        # Forward pass: propagate velocities and accelerations
+        for node_idx in self.chain.topo_order:
+            joint_idx = self.chain.joint_indices_list[node_idx]
+            joint_type_idx = self.chain.joint_type_indices_list[node_idx]
+            parent_idx = self.chain.parent_list[node_idx]
+
+            T_joint_offset = as_batched_transform(
+                self.chain.joint_offsets[node_idx], batch_size, self.dtype, self.device
+            )
+            T_link_offset = as_batched_transform(
+                self.chain.link_offsets[node_idx], batch_size, self.dtype, self.device
+            )
+
+            # Select motion transform
+            is_revolute = (joint_type_idx == Joint.TYPES.index('revolute'))
+            is_prismatic = (joint_type_idx == Joint.TYPES.index('prismatic'))
+
+            if is_revolute:
+                T_motion = T_revolute[:, joint_idx]
+            elif is_prismatic:
+                T_motion = T_prismatic[:, joint_idx]
+            else:  # fixed
+                T_motion = I44
+
+            # Parent -> child transform
+            T_parent_to_child = T_joint_offset @ T_motion @ T_link_offset
+            Xup_i = spatial_adjoint(inv_homogeneous(T_parent_to_child))
+            Xup[node_idx] = Xup_i
+
+            # Joint subspace
+            is_actuated = is_revolute or is_prismatic
+            if is_actuated:
+                axis_local = self.axes_norm[joint_idx].expand(batch_size, -1)
+                twist_joint = torch.zeros((batch_size, 6), dtype=self.dtype, device=self.device)
+                if is_revolute:
+                    twist_joint[:, 3:] = axis_local
+                else:  # prismatic
+                    twist_joint[:, :3] = axis_local
+                S[node_idx] = (spatial_adjoint(T_link_offset) @ twist_joint.unsqueeze(-1)).squeeze(-1)
+                v_joint = v_joints[:, joint_idx].unsqueeze(-1)
+                a_joint = a_joints[:, joint_idx].unsqueeze(-1)
             else:
-                twist_joint[:, :3] = axis_local
-            S[i] = (spatial_adjoint(T_link) @ twist_joint.unsqueeze(-1)).squeeze(-1)
-            v_j_i = v_j[:, j_idx].unsqueeze(-1)
-            a_j_i = a_j[:, j_idx].unsqueeze(-1)
-        else:
-            v_j_i = torch.zeros((B, 1), dtype=dtype, device=device)
-            a_j_i = torch.zeros((B, 1), dtype=dtype, device=device)
+                v_joint = torch.zeros((batch_size, 1), dtype=self.dtype, device=self.device)
+                a_joint = torch.zeros((batch_size, 1), dtype=self.dtype, device=self.device)
 
-        # Parent state
-        if parent[i] == -1:
-            # Root node - use base velocity/acceleration if floating
-            v_parent = v_base if (has_fb and v_base is not None) else torch.zeros((B, 6), dtype=dtype, device=device)
-            a_parent = (a_base if (has_fb and a_base is not None) else torch.zeros((B, 6), dtype=dtype, device=device)) + a_world0
-            T_world_to_parent = T_world_to_base
-        else:
-            v_parent = v[parent[i]]
-            a_parent = a[parent[i]]
-            T_world_to_parent = T_world_to_node[parent[i]]
+            # Parent state
+            if parent_idx == -1:  # Root node
+                if self.is_floating_base and v_base is not None:
+                    v_parent = v_base
+                    a_parent = a_base + a_world0
+                else:
+                    v_parent = torch.zeros((batch_size, 6), dtype=self.dtype, device=self.device)
+                    a_parent = a_world0
+                T_world_to_parent = T_world_to_base
+            else:
+                v_parent = v[parent_idx]
+                a_parent = a[parent_idx]
+                T_world_to_parent = T_world_to_node[parent_idx]
 
-        # RNEA propagation
-        vJ = S[i] * v_j_i
-        v[i] = (Xup_i @ v_parent.unsqueeze(-1)).squeeze(-1) + vJ
-        a[i] = (Xup_i @ a_parent.unsqueeze(-1)).squeeze(-1) + S[i] * a_j_i \
-               + (motion_cross_product(v[i]) @ vJ.unsqueeze(-1)).squeeze(-1)
+            # RNEA propagation
+            vJ = S[node_idx] * v_joint
+            v[node_idx] = (Xup_i @ v_parent.unsqueeze(-1)).squeeze(-1) + vJ
 
-        # Accumulate world pose
-        T_world_to_node[i] = T_world_to_parent @ T_parent_to_child
+            coriolis = (motion_cross_product(v[node_idx]) @ vJ.unsqueeze(-1)).squeeze(-1)
+            a[node_idx] = (
+                (Xup_i @ a_parent.unsqueeze(-1)).squeeze(-1)
+                + S[node_idx] * a_joint
+                + coriolis
+            )
 
-    # Select frame
-    a_local = a[node_idx]
+            # Accumulate world pose
+            T_world_to_node[node_idx] = T_world_to_parent @ T_parent_to_child
 
-    ref = reference_frame.lower()
-    if ref in ("local", "body", "frame"):
-        return a_local.squeeze(0) if B == 1 else a_local
-    
-    if ref in ("world", "global"):
-        Ad_world_wrt_body = spatial_adjoint(T_world_to_node[node_idx])
-        a_world = (Ad_world_wrt_body @ a_local.unsqueeze(-1)).squeeze(-1)
-        return a_world.squeeze(0) if B == 1 else a_world
-    
-    raise ValueError(f"reference_frame must be 'local' or 'world', got: {reference_frame!r}")
+        # Extract acceleration at target frame
+        a_local = a[frame_id]
+
+        if reference_frame == "world":
+            Ad_world_wrt_body = spatial_adjoint(T_world_to_node[frame_id])
+            a_world = (Ad_world_wrt_body @ a_local.unsqueeze(-1)).squeeze(-1)
+            return a_world
+        else:  # local
+            return a_local

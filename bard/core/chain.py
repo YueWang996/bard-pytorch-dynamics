@@ -1,3 +1,14 @@
+"""
+Defines the core kinematic chain data structure for representing robots.
+
+This module contains the ``Chain`` class, which is the central object for all
+kinematics and dynamics calculations in the ``bard`` library. It processes a
+robot's structure, typically parsed from a URDF file, into an efficient,
+indexed, and tensor-based representation. This class manages the robot's
+topology, joint properties, and tensor attributes like data type and device,
+providing a unified interface for all other algorithm classes.
+"""
+
 from functools import lru_cache
 from typing import Dict, List, Optional, Sequence, Union
 import numpy as np
@@ -15,24 +26,28 @@ class Chain:
     for querying frames, joints, and managing data types and devices. It supports
     both fixed-base and floating-base robots for vectorized batch operations.
 
-    Coordinate Conventions:
-        Fixed-base robots:
-            - q: [joint_angles...] (nq = n_joints)
-            - v: [joint_velocities...] (nv = n_joints)
-        
-        Floating-base robots:
-            - q: [tx, ty, tz, qw, qx, qy, qz, joint_angles...] (nq = 7 + n_joints)
-            - v: [vx, vy, vz, wx, wy, wz, joint_velocities...] (nv = 6 + n_joints)
-            
-            The base orientation is represented by a unit quaternion [qw, qx, qy, qz].
+    **Coordinate Conventions:**
+
+    * **Fixed-base robots:**
+        * Configuration ``q``: ``[joint_angles...]`` (``nq = n_joints``)
+        * Velocity ``v``: ``[joint_velocities...]`` (``nv = n_joints``)
     
+    * **Floating-base robots:**
+        * Configuration ``q``: ``[tx, ty, tz, qw, qx, qy, qz, joint_angles...]`` (``nq = 7 + n_joints``)
+        * Velocity ``v``: ``[vx, vy, vz, wx, wy, wz, joint_velocities...]`` (``nv = 6 + n_joints``)
+    
+    The base orientation is represented by a unit quaternion ``[qw, qx, qy, qz]``.
+
     Attributes:
-        has_floating_base (bool): True if the robot has a 6-DOF floating base.
-        nq (int): The total dimension of the configuration space vector `q`.
-        nv (int): The total dimension of the velocity space vector `v`.
+        has_floating_base (bool): ``True`` if the robot has a 6-DOF floating base.
+        nq (int): The total dimension of the configuration space vector ``q``.
+        nv (int): The total dimension of the velocity space vector ``v``.
         n_joints (int): The number of actuated (non-fixed) joints.
+        n_nodes (int): The total number of frames (links) in the kinematic tree.
         dtype (torch.dtype): The PyTorch data type used for all tensors.
         device (torch.device): The PyTorch device (e.g., "cpu" or "cuda") for all tensors.
+        low (torch.Tensor): A tensor of lower position limits for all actuated joints.
+        high (torch.Tensor): A tensor of upper position limits for all actuated joints.
     """
 
     def __init__(
@@ -44,15 +59,16 @@ class Chain:
         device: Union[str, torch.device] = "cpu"
     ):
         """Initializes a kinematic chain from a root frame.
-        
+
         Args:
-            root_frame (Frame): The root frame of the kinematic tree structure.
-            floating_base (bool, optional): If True, the robot is treated as having
-                a 6-DOF floating base. Defaults to False.
+            root_frame (Frame): The root frame of the kinematic tree structure,
+                typically obtained from a URDF parser.
+            floating_base (bool, optional): If ``True``, the robot is treated as having
+                a 6-DOF floating base. Defaults to ``False``.
             base_name (str, optional): A name prefix used for base coordinates
                 in methods like `get_generalized_coordinate_names`. Defaults to "base".
             dtype (torch.dtype, optional): The default PyTorch data type for
-                all tensors in the chain. Defaults to torch.float32.
+                all tensors in the chain. Defaults to ``torch.float32``.
             device (Union[str, torch.device], optional): The default PyTorch device
                 for all tensors in the chain. Defaults to "cpu".
         """
@@ -75,7 +91,14 @@ class Chain:
         self.high = torch.tensor(high, device=self.device, dtype=self.dtype)
 
     def _build_tree_structure(self) -> None:
-        """Builds a flat, indexed representation of the kinematic tree."""
+        """Builds a flat, indexed representation of the kinematic tree.
+        
+        This internal method traverses the kinematic tree starting from the root frame.
+        It populates several pre-computed attributes, including parent-child
+        relationships, topological order, joint axes, and spatial inertias. It also
+        creates Python list versions of these attributes for high-speed, zero-overhead
+        access within compiled dynamics and kinematics functions.
+        """
         self.parents_indices: List[torch.Tensor] = []
         self.joint_indices: torch.Tensor = None
         self.joint_type_indices: torch.Tensor = None
@@ -127,6 +150,7 @@ class Chain:
             idx += 1
         
         n_nodes = idx
+        self.n_nodes = n_nodes
         
         self.joint_type_indices = torch.tensor(
             joint_type_indices_list, dtype=torch.long, device=self.device
@@ -176,11 +200,31 @@ class Chain:
         
         # Pre-compute spatial inertias for ALL links (batched)
         self.spatial_inertias = self._precompute_all_spatial_inertias(n_nodes)
+        
+        # NEW: Pre-compute Python lists for zero-overhead access in dynamics functions
+        self.parent_list = self.parent_array.tolist()
+        self.children_list = children_lists  # Already Python lists
+        self.joint_indices_list = self.joint_indices.tolist()
+        self.joint_type_indices_list = self.joint_type_indices.tolist()
+        
+        # NEW: Pre-compute parents_indices as Python lists for jacobian/kinematics
+        self.parents_indices_list = [path.tolist() for path in self.parents_indices]
 
     def _precompute_all_spatial_inertias(self, n_nodes: int) -> torch.Tensor:
-        """Pre-compute spatial inertia for all links in one batched operation."""
+        """Pre-computes spatial inertia matrices for all links.
+
+        This method iterates through all nodes (frames) in the chain and computes
+        their 6x6 spatial inertia matrix in the local link frame. This is done
+        once at initialization to avoid repeated calculations.
+
+        Args:
+            n_nodes (int): The total number of nodes in the chain.
+
+        Returns:
+            torch.Tensor: A tensor of shape ``(n_nodes, 6, 6)`` containing the
+            spatial inertia matrix for each link.
+        """
         def skew_symmetric(v: torch.Tensor) -> torch.Tensor:
-            """Compute skew-symmetric matrix from 3D vector."""
             x, y, z = v[..., 0], v[..., 1], v[..., 2]
             zeros = torch.zeros_like(x)
             return torch.stack([
@@ -251,14 +295,18 @@ class Chain:
     ) -> "Chain":
         """Moves all tensors in the chain to the specified dtype and/or device.
 
+        This is an in-place operation that modifies the chain's internal tensors.
+        It is useful for switching between CPU and GPU computation or changing
+        floating-point precision.
+
         Args:
-            dtype (Optional[torch.dtype], optional): The target PyTorch data type.
-                If None, the current dtype is maintained. Defaults to None.
-            device (Optional[Union[str, torch.device]], optional): The target
-                PyTorch device. If None, the current device is maintained. Defaults to None.
-            
+            dtype (torch.dtype, optional): The target data type. If ``None``, the
+                current dtype is preserved.
+            device (Union[str, torch.device], optional): The target device.
+                If ``None``, the current device is preserved.
+
         Returns:
-            Chain: Returns self for method chaining.
+            Chain: The instance itself, allowing for method chaining.
         """
         if dtype is not None:
             self.dtype = dtype
@@ -267,6 +315,7 @@ class Chain:
             
         self._root = self._root.to(dtype=self.dtype, device=self.device)
         self.parents_indices = [p.to(device=self.device) for p in self.parents_indices]
+        self.parents_indices_list = [path.tolist() for path in self.parents_indices]
         self.joint_type_indices = self.joint_type_indices.to(device=self.device)
         self.joint_indices = self.joint_indices.to(device=self.device)
         self.axes = self.axes.to(dtype=self.dtype, device=self.device)
@@ -285,6 +334,16 @@ class Chain:
         self.children_count = self.children_count.to(device=self.device)
         self.spatial_inertias = self.spatial_inertias.to(dtype=self.dtype, device=self.device)
         
+        # Regenerate Python lists from updated tensors
+        self.parent_list = self.parent_array.tolist()
+        self.children_list = [
+            self.children_array[i, :self.children_count[i]].tolist()
+            for i in range(self.n_nodes)
+        ]
+        self.joint_indices_list = self.joint_indices.tolist()
+        self.joint_type_indices_list = self.joint_type_indices.tolist()
+        self.parents_indices_list = [path.tolist() for path in self.parents_indices] 
+        
         return self
 
     @property
@@ -301,8 +360,9 @@ class Chain:
         """Returns the ordered names for all configuration variables `q`.
 
         Args:
-            include_base (bool, optional): If True and the chain has a floating
-                base, prepends the base coordinate names. Defaults to True.
+            include_base (bool, optional): If ``True`` and the chain has a floating
+                base, prepends the base coordinate names (e.g., "base_tx", "base_qy").
+                Defaults to ``True``.
             
         Returns:
             List[str]: An ordered list of coordinate names.
@@ -320,8 +380,9 @@ class Chain:
         """Returns the ordered names for all velocity variables `v`.
 
         Args:
-            include_base (bool, optional): If True and the chain has a floating
-                base, prepends the base velocity names. Defaults to True.
+            include_base (bool, optional): If ``True`` and the chain has a floating
+                base, prepends the base velocity names (e.g., "base_vx", "base_wz").
+                Defaults to ``True``.
             
         Returns:
             List[str]: An ordered list of velocity names.
@@ -343,11 +404,12 @@ class Chain:
         """Splits generalized coordinates `q` into base and joint components.
         
         Args:
-            q (torch.Tensor): Generalized coordinates of shape (..., nq).
+            q (torch.Tensor): Generalized coordinates of shape ``(..., nq)``.
             
         Returns:
-            tuple[Optional[torch.Tensor], torch.Tensor]: A tuple `(q_base, q_joints)`.
-            `q_base` is None for fixed-base robots.
+            tuple[Optional[torch.Tensor], torch.Tensor]: A tuple ``(q_base, q_joints)``.
+            ``q_base`` has shape ``(..., 7)`` or is ``None`` for fixed-base robots.
+            ``q_joints`` has shape ``(..., n_joints)``.
         """
         q = self.ensure_tensor(q)
         if q.ndim == 1:
@@ -360,11 +422,12 @@ class Chain:
         """Splits generalized velocities `v` into base and joint components.
         
         Args:
-            v (torch.Tensor): Generalized velocities of shape (..., nv).
+            v (torch.Tensor): Generalized velocities of shape ``(..., nv)``.
             
         Returns:
-            tuple[Optional[torch.Tensor], torch.Tensor]: A tuple `(v_base, v_joints)`.
-            `v_base` is None for fixed-base robots.
+            tuple[Optional[torch.Tensor], torch.Tensor]: A tuple ``(v_base, v_joints)``.
+            ``v_base`` has shape ``(..., 6)`` or is ``None`` for fixed-base robots.
+            ``v_joints`` has shape ``(..., n_joints)``.
         """
         v = self.ensure_tensor(v)
         if v.ndim == 1:
@@ -377,11 +440,12 @@ class Chain:
         """Combines base and joint positions into a single `q` vector.
         
         Args:
-            q_base (Optional[torch.Tensor]): Base position [tx,ty,tz,qw,qx,qy,qz] or None.
-            q_joints (torch.Tensor): Joint positions.
+            q_base (Optional[torch.Tensor]): Base position of shape ``(..., 7)``
+                ``[tx,ty,tz,qw,qx,qy,qz]``, or ``None`` for fixed-base robots.
+            q_joints (torch.Tensor): Joint positions of shape ``(..., n_joints)``.
             
         Returns:
-            torch.Tensor: The full generalized coordinate vector `q`.
+            torch.Tensor: The full generalized coordinate vector `q` of shape ``(..., nq)``.
         """
         if not self.has_floating_base:
             return q_joints
@@ -395,11 +459,12 @@ class Chain:
         """Combines base and joint velocities into a single `v` vector.
         
         Args:
-            v_base (Optional[torch.Tensor]): Base velocity [vx,vy,vz,wx,wy,wz] or None.
-            v_joints (torch.Tensor): Joint velocities.
+            v_base (Optional[torch.Tensor]): Base velocity of shape ``(..., 6)``
+                ``[vx,vy,vz,wx,wy,wz]``, or ``None`` for fixed-base robots.
+            v_joints (torch.Tensor): Joint velocities of shape ``(..., n_joints)``.
             
         Returns:
-            torch.Tensor: The full generalized velocity vector `v`.
+            torch.Tensor: The full generalized velocity vector `v` of shape ``(..., nv)``.
         """
         if not self.has_floating_base:
             return v_joints
@@ -435,14 +500,15 @@ class Chain:
     def get_joint_parameter_names(self, exclude_fixed: bool = True) -> List[str]:
         """Returns the ordered list of actuated joint names.
 
-        This order defines the layout of the joint components in the `q` and `v` vectors.
-        
+        This order defines the canonical layout of the joint components in the `q` and `v`
+        vectors and is used consistently across all calculations.
+
         Args:
-            exclude_fixed (bool, optional): If True, names of fixed joints are
-                omitted. Defaults to True.
+            exclude_fixed (bool, optional): If ``True``, names of fixed joints are
+                omitted. This is the standard behavior. Defaults to ``True``.
         
         Returns:
-            List[str]: An ordered list of joint names.
+            List[str]: An ordered list of actuated joint names.
         """
         return [j.name for j in self.get_joints(exclude_fixed=exclude_fixed)]
 
@@ -453,7 +519,7 @@ class Chain:
             name (str): The name of the frame to search for.
             
         Returns:
-            Optional[Frame]: The Frame object if found, otherwise None.
+            Optional[Frame]: The Frame object if found, otherwise ``None``.
         """
         if self._root.name == name:
             return self._root
@@ -474,8 +540,8 @@ class Chain:
         """Returns all frame names in the chain in traversal order.
 
         Args:
-            exclude_fixed (bool, optional): If True, names of frames associated
-                with fixed joints are omitted. Defaults to True.
+            exclude_fixed (bool, optional): If ``True``, names of frames associated
+                with fixed joints are omitted. Defaults to ``True``.
         
         Returns:
             List[str]: A list of all frame names.
@@ -497,11 +563,14 @@ class Chain:
     def get_frame_indices(self, *frame_names: str) -> torch.Tensor:
         """Gets the integer indices for a list of frame names.
         
+        These indices correspond to the row/column in pre-computed data structures
+        like ``spatial_inertias``.
+
         Args:
             *frame_names (str): One or more frame names.
             
         Returns:
-            torch.Tensor: A tensor of integer indices.
+            torch.Tensor: A 1D tensor of integer indices.
         """
         return torch.tensor(
             [self.frame_to_idx[n] for n in frame_names], 
@@ -515,14 +584,16 @@ class Chain:
         """Converts various input types to a tensor in the correct joint order.
         
         This utility handles conversion from numpy arrays, lists, or dictionaries
-        (mapping joint names to values) into a torch.Tensor on the chain's
+        (mapping joint names to values) into a ``torch.Tensor`` on the chain's
         device and dtype.
 
         Args:
             value (Union[torch.Tensor, np.ndarray, List, Dict]): The input value.
+                If a dictionary is provided, it must contain all actuated joint names
+                as keys.
             
         Returns:
-            torch.Tensor: The converted tensor.
+            torch.Tensor: The converted tensor, on the correct device and dtype.
             
         Raises:
             ValueError: If a dictionary input is missing values for some joints.
@@ -567,10 +638,11 @@ class Chain:
         return ()
 
     def clamp(self, joint_values: torch.Tensor) -> torch.Tensor:
-        """Clamps joint values to the robot's defined joint limits.
+        """Clamps joint values to the robot's defined joint position limits.
         
         Args:
-            joint_values (torch.Tensor): A tensor of joint values.
+            joint_values (torch.Tensor): A tensor of joint values, corresponding to
+                the joint-space part of ``q``.
             
         Returns:
             torch.Tensor: The clamped joint values.
