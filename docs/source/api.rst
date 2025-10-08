@@ -8,6 +8,7 @@ Robot Chain
 
 .. automodule:: bard.core.chain
    :members: Chain
+   :exclude-members: nq, nv
 
 Kinematics
 ----------

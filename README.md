@@ -30,6 +30,10 @@ We strongly recommend using the **Conda** package manager to create an isolated 
 First, clone the repository:
 
 ```bash
+# create a conda environment
+conda create -n yourEnv
+
+# clone the repo
 git clone https://github.com/YueWang996/bard.git
 cd bard
 ```
@@ -63,7 +67,7 @@ If you initially installed the CPU-only version and want to switch to the CUDA v
 1.  Uninstall the existing CPU-only PyTorch version:
 
     ```bash
-    pip uninstall -y torch torchvision torchaudio
+    pip uninstall -y torch torchvision
     ```
 
 2.  Install the correct CUDA-enabled PyTorch build from the [official site](https://pytorch.org/get-started/locally/).
@@ -98,7 +102,7 @@ The library is rigorously tested against `pinocchio` to ensure numerical accurac
 conda install -c conda-forge pinocchio
 
 # From the project root directory, install dev dependencies
-pip install -e ".[dev]"
+pip install -e .[dev]
 
 # Run the test suite
 pytest

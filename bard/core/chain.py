@@ -346,12 +346,12 @@ class Chain:
 
     @property
     def nq(self) -> int:
-        """Returns the total dimension of the configuration space vector `q`."""
+        """Returns the total dimension of the generalized joint position `q`."""
         return self.nq_base + self.n_joints
 
     @property
     def nv(self) -> int:
-        """Returns the total dimension of the velocity space vector `v`."""
+        """Returns the total dimension of the generalized joint velocity `v`."""
         return self.nv_base + self.n_joints
 
     def get_generalized_coordinate_names(self, include_base: bool = True) -> List[str]:

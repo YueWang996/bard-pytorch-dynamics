@@ -161,23 +161,29 @@ class RNEA:
 
         Args:
             q (torch.Tensor): A batch of generalized positions.
-                - For fixed-base robots, shape is ``(B, n_joints)``.
-                - For floating-base robots, shape is ``(B, 7 + n_joints)``,
-                  where the first 7 elements are ``[tx, ty, tz, qw, qx, qy, qz]``.
+
+              - For fixed-base robots, shape is ``(B, n_joints)``.
+              - For floating-base robots, shape is ``(B, 7 + n_joints)``,
+                where the first 7 elements are ``[tx, ty, tz, qw, qx, qy, qz]``.
+
             qd (torch.Tensor): A batch of generalized velocities.
-                - For fixed-base robots, shape is ``(B, n_joints)``.
-                - For floating-base robots, shape is ``(B, 6 + n_joints)``,
-                  where the first 6 elements represent the base's spatial velocity
-                  ``[vx, vy, vz, wx, wy, wz]``.
+
+              - For fixed-base robots, shape is ``(B, n_joints)``.
+              - For floating-base robots, shape is ``(B, 6 + n_joints)``,
+                where the first 6 elements represent the base's spatial velocity
+                ``[vx, vy, vz, wx, wy, wz]``.
+
             qdd (torch.Tensor): A batch of generalized accelerations. Must have the
                 same shape as ``qd``.
+
             gravity (torch.Tensor, optional): A 3-element gravity vector in the
                 world frame. If ``None``, defaults to ``[0, 0, -9.81]``.
 
         Returns:
             torch.Tensor: A batch of generalized forces ``tau``.
-                - For fixed-base robots, shape is ``(B, n_joints)``.
-                - For floating-base robots, shape is ``(B, 6 + n_joints)``.
+
+              - For fixed-base robots, shape is ``(B, n_joints)``.
+              - For floating-base robots, shape is ``(B, 6 + n_joints)``.
 
         Raises:
             ValueError: If the input batch size ``B`` exceeds ``self.max_batch_size``.
@@ -520,14 +526,16 @@ class CRBA:
 
         Args:
             q (torch.Tensor): A batch of generalized positions.
-                - For fixed-base robots, shape is ``(B, n_joints)``.
-                - For floating-base robots, shape is ``(B, 7 + n_joints)``,
-                  where the first 7 elements are ``[tx, ty, tz, qw, qx, qy, qz]``.
+
+              - For fixed-base robots, shape is ``(B, n_joints)``.
+              - For floating-base robots, shape is ``(B, 7 + n_joints)``,
+                where the first 7 elements are ``[tx, ty, tz, qw, qx, qy, qz]``.
 
         Returns:
             torch.Tensor: The batched mass matrix ``M``.
-                - For fixed-base robots, shape is ``(B, n_joints, n_joints)``.
-                - For floating-base robots, shape is ``(B, 6 + n_joints, 6 + n_joints)``.
+            
+              - For fixed-base robots, shape is ``(B, n_joints, n_joints)``.
+              - For floating-base robots, shape is ``(B, 6 + n_joints, 6 + n_joints)``.
 
         Raises:
             ValueError: If the input batch size ``B`` exceeds ``self.max_batch_size``.
