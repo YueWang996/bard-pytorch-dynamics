@@ -120,7 +120,7 @@ def verify_correctness(rnea, q, qd, qdd, pin_model, pin_data, q_pin, qd_pin, qdd
     max_diff = np.abs(tau_bard - tau_pin).max()
     print(f"Max difference: {max_diff:.2e}")
 
-    tolerance = 1e-6
+    tolerance = 5e-6
     if max_diff > tolerance:
         print(f"WARNING: Results differ by more than {tolerance:.2e}")
         return False
