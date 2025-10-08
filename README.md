@@ -1,7 +1,9 @@
 # bard: Batched Articulated Robot Dynamics
 
-[](https://www.google.com/search?q=https://github.com/YueWang996/bard)
-[](https://opensource.org/licenses/MIT)
+[![CI](https://github.com/YueWang996/bard/actions/workflows/ci.yml/badge.svg)](https://github.com/YueWang996/bard/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17291122.svg)](https://doi.org/10.5281/zenodo.17291122)
+
 
 `bard` is a lightweight, PyTorch-native library for rigid-body dynamics that leverages tensor operations to perform efficient, batched computations on either the CPU or GPU. It provides a simple yet powerful API for loading robots from URDF files and analyzing their motion using standard robotics algorithms.
 
@@ -38,6 +40,7 @@ Next, follow the instructions for your desired compute device.
 
 1.  Install a CUDA-enabled build of PyTorch by following the official instructions for your specific platform and CUDA version:
     [https://pytorch.org/get-started/locally/](https://pytorch.org/get-started/locally/)
+    > **Note:** `bard` has been tested against `PyTorch 2.8.0` and `CUDA 12.6`. If you encounter any errors, we recommend switching to these package versions to resolve potential issues.
 
 2.  Once PyTorch is installed, install `bard`:
 
@@ -73,7 +76,7 @@ If you initially installed the CPU-only version and want to switch to the CUDA v
 
 ### Building the Documentation
 
-If you need to build the documentation locally, follow these steps.
+The documentation is available [here](https://yuewang996.github.io/bard/). If you need to build the documentation locally, follow these steps.
 
 1.  **Install documentation dependencies** from the project's root directory:
     ```bash
@@ -99,6 +102,21 @@ pip install -e ".[dev]"
 
 # Run the test suite
 pytest
+```
+
+## Citing bard
+
+If you use `bard` in your research, please consider citing it:
+
+```bibtex
+@software{wang_2025_bard,
+  author       = {Wang, Yue},
+  title        = {{bard: Batched Articulated Robot Dynamics}},
+  month        = oct,
+  year         = {2025},
+  doi          = {10.5281/zenodo.17291122},
+  url          = {https://github.com/YueWang996/bard}
+}
 ```
 
 
