@@ -68,19 +68,23 @@ class ForwardKinematics:
                 position = T_world_eef[:, :3, 3]
                 # ... use the computed pose ...
     """
-    
-    def __init__(self, chain: chain.Chain, max_batch_size: int = 1024,
-                 compile_enabled: Optional[bool] = False,
-                 compile_kwargs: Optional[Dict[str, Any]] = None):
+
+    def __init__(
+        self,
+        chain: chain.Chain,
+        max_batch_size: int = 1024,
+        compile_enabled: Optional[bool] = False,
+        compile_kwargs: Optional[Dict[str, Any]] = None,
+    ):
         self.chain = chain
         self.max_batch_size = max_batch_size
         self.dtype = chain.dtype
         self.device = chain.device
-        
+
         self.n_nodes = chain.n_nodes
         self.n_joints = chain.n_joints
         self.is_floating_base = chain.has_floating_base
-        
+
         # Pre-compute normalized axes (same as jacobian_cached.py)
         self.axes_norm = chain.axes / chain.axes.norm(dim=-1, keepdim=True).clamp_min(1e-12)
 
@@ -102,7 +106,7 @@ class ForwardKinematics:
         if compile_kwargs:
             self._compile_kwargs.update(compile_kwargs)
         self._setup_calc_callable()
-        
+
     def to(self, dtype: Optional[torch.dtype] = None, device: Optional[torch.device] = None):
         """Move all internal buffers to a specified dtype and/or device.
 
@@ -119,13 +123,13 @@ class ForwardKinematics:
             self.dtype = dtype
         if device is not None:
             self.device = device
-        
+
         self.axes_norm = self.axes_norm.to(dtype=self.dtype, device=self.device)
 
         self._setup_calc_callable()
-        
+
         return self
-    
+
     def calc(
         self,
         q: torch.Tensor,
@@ -166,10 +170,10 @@ class ForwardKinematics:
         frame_id: int,
     ) -> torch.Tensor:
         batch_size = q.shape[0]
-        
+
         # Get path from root to target frame as Python list
         path_nodes = self.chain.parents_indices_list[frame_id]
-        
+
         # Split configuration
         if self.is_floating_base:
             q_base = q[:, :7]
@@ -225,9 +229,9 @@ class ForwardKinematics:
             )
 
             # Select motion transform based on joint type
-            is_revolute = (joint_type_idx == Joint.TYPES.index('revolute'))
-            is_prismatic = (joint_type_idx == Joint.TYPES.index('prismatic'))
-            
+            is_revolute = joint_type_idx == Joint.TYPES.index("revolute")
+            is_prismatic = joint_type_idx == Joint.TYPES.index("prismatic")
+
             if is_revolute:
                 T_motion = T_revolute[:, joint_idx]
             elif is_prismatic:
@@ -284,29 +288,36 @@ class SpatialAcceleration:
                 linear_accel = a_world[:, :3]
                 # ... use the computed acceleration ...
     """
-    def __init__(self, chain: chain.Chain, max_batch_size: int = 1024,
-                 compile_enabled: Optional[bool] = False,
-                 compile_kwargs: Optional[Dict[str, Any]] = {"mode": "reduce-overhead"}):
+
+    def __init__(
+        self,
+        chain: chain.Chain,
+        max_batch_size: int = 1024,
+        compile_enabled: Optional[bool] = False,
+        compile_kwargs: Optional[Dict[str, Any]] = {"mode": "reduce-overhead"},
+    ):
         self.chain = chain
         self.max_batch_size = max_batch_size
         self.dtype = chain.dtype
         self.device = chain.device
-        
+
         self.n_nodes = chain.n_nodes
         self.n_joints = chain.n_joints
         self.is_floating_base = chain.has_floating_base
-        
+
         # Pre-allocate all buffers
-        self.Xup = torch.zeros(self.n_nodes, max_batch_size, 6, 6, dtype=self.dtype, device=self.device)
+        self.Xup = torch.zeros(
+            self.n_nodes, max_batch_size, 6, 6, dtype=self.dtype, device=self.device
+        )
         self.S = torch.zeros(self.n_nodes, max_batch_size, 6, dtype=self.dtype, device=self.device)
         self.v = torch.zeros(self.n_nodes, max_batch_size, 6, dtype=self.dtype, device=self.device)
         self.a = torch.zeros(self.n_nodes, max_batch_size, 6, dtype=self.dtype, device=self.device)
-        
+
         # Pre-allocate transform storage (avoid Python list mutation in compiled code)
         self.T_world_to_node = torch.zeros(
             self.n_nodes, max_batch_size, 4, 4, dtype=self.dtype, device=self.device
         )
-        
+
         # Pre-compute normalized axes (same as jacobian_cached.py)
         self.axes_norm = chain.axes / chain.axes.norm(dim=-1, keepdim=True).clamp_min(1e-12)
 
@@ -345,7 +356,7 @@ class SpatialAcceleration:
             self.dtype = dtype
         if device is not None:
             self.device = device
-        
+
         self.Xup = self.Xup.to(dtype=self.dtype, device=self.device)
         self.S = self.S.to(dtype=self.dtype, device=self.device)
         self.v = self.v.to(dtype=self.dtype, device=self.device)
@@ -354,9 +365,9 @@ class SpatialAcceleration:
         self.axes_norm = self.axes_norm.to(dtype=self.dtype, device=self.device)
 
         self._setup_calc_callable()
-        
+
         return self
-    
+
     def calc(
         self,
         q: torch.Tensor,
@@ -394,7 +405,7 @@ class SpatialAcceleration:
                 f"Batch size {batch_size} exceeds max_batch_size {self.max_batch_size}..."
             )
         return self._calc_callable(q, qd, qdd, frame_id, reference_frame)
-    
+
     def _setup_calc_callable(self):
         fn = self._calc_impl
         if self._compile_enabled:
@@ -410,19 +421,19 @@ class SpatialAcceleration:
         reference_frame: str = "local",
     ) -> torch.Tensor:
         batch_size = q.shape[0]
-        
+
         # Get sliced views of pre-allocated buffers
         Xup = self.Xup[:, :batch_size, :, :]
         S = self.S[:, :batch_size, :]
         v = self.v[:, :batch_size, :]
         a = self.a[:, :batch_size, :]
         T_world_to_node = self.T_world_to_node[:, :batch_size, :, :]
-        
+
         # Zero out buffers
         S.zero_()
         v.zero_()
         a.zero_()
-        
+
         # Split base and joint components
         if self.is_floating_base:
             q_base = q[:, :7]
@@ -491,8 +502,8 @@ class SpatialAcceleration:
             )
 
             # Select motion transform
-            is_revolute = (joint_type_idx == Joint.TYPES.index('revolute'))
-            is_prismatic = (joint_type_idx == Joint.TYPES.index('prismatic'))
+            is_revolute = joint_type_idx == Joint.TYPES.index("revolute")
+            is_prismatic = joint_type_idx == Joint.TYPES.index("prismatic")
 
             if is_revolute:
                 T_motion = T_revolute[:, joint_idx]
@@ -515,7 +526,9 @@ class SpatialAcceleration:
                     twist_joint[:, 3:] = axis_local
                 else:  # prismatic
                     twist_joint[:, :3] = axis_local
-                S[node_idx] = (spatial_adjoint(T_link_offset) @ twist_joint.unsqueeze(-1)).squeeze(-1)
+                S[node_idx] = (spatial_adjoint(T_link_offset) @ twist_joint.unsqueeze(-1)).squeeze(
+                    -1
+                )
                 v_joint = v_joints[:, joint_idx].unsqueeze(-1)
                 a_joint = a_joints[:, joint_idx].unsqueeze(-1)
             else:
@@ -542,9 +555,7 @@ class SpatialAcceleration:
 
             coriolis = (motion_cross_product(v[node_idx]) @ vJ.unsqueeze(-1)).squeeze(-1)
             a[node_idx] = (
-                (Xup_i @ a_parent.unsqueeze(-1)).squeeze(-1)
-                + S[node_idx] * a_joint
-                + coriolis
+                (Xup_i @ a_parent.unsqueeze(-1)).squeeze(-1) + S[node_idx] * a_joint + coriolis
             )
 
             # Accumulate world pose

@@ -9,7 +9,10 @@ import pinocchio as pin
 from bard.parsers.urdf import build_chain_from_urdf
 from bard.core.jacobian import calc_jacobian
 
-@pytest.mark.skipif(not hasattr(pin, 'buildModelFromXML'), reason="Pinocchio fixtures not fully available")
+
+@pytest.mark.skipif(
+    not hasattr(pin, "buildModelFromXML"), reason="Pinocchio fixtures not fully available"
+)
 class TestJacobianFixedBase:
     """Test suite for fixed-base robot Jacobian."""
 
@@ -24,7 +27,7 @@ class TestJacobianFixedBase:
         """Verifies the Jacobian at random configurations against Pinocchio."""
         bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model
-        
+
         torch.manual_seed(42)
         np.random.seed(42)
 
@@ -39,16 +42,22 @@ class TestJacobianFixedBase:
             q_pin = q_bard.cpu().numpy()
 
             # Bard Jacobian
-            J_bard = calc_jacobian(bard_chain, q_bard, bard_frame_idx, reference_frame=reference_frame)
+            J_bard = calc_jacobian(
+                bard_chain, q_bard, bard_frame_idx, reference_frame=reference_frame
+            )
             J_bard_np = J_bard[0].cpu().numpy()
 
             # Pinocchio Jacobian
             pin.computeJointJacobians(pin_model_obj, pin_data, q_pin)
             pin.updateFramePlacements(pin_model_obj, pin_data)
-            
-            pin_ref_frame = pin.ReferenceFrame.WORLD if reference_frame == "world" else pin.ReferenceFrame.LOCAL
+
+            pin_ref_frame = (
+                pin.ReferenceFrame.WORLD if reference_frame == "world" else pin.ReferenceFrame.LOCAL
+            )
             J_pin = pin.getFrameJacobian(pin_model_obj, pin_data, pin_frame_id, pin_ref_frame)
 
             # Compare results
             tol = 1e-5 if dtype == torch.float32 else 1e-7
-            assert np.allclose(J_bard_np, J_pin, atol=tol), f"Jacobian mismatch in '{reference_frame}' frame"
+            assert np.allclose(
+                J_bard_np, J_pin, atol=tol
+            ), f"Jacobian mismatch in '{reference_frame}' frame"

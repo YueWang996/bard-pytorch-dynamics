@@ -38,10 +38,10 @@ def so3_relative_angle(R1, R2, cos_angle: bool = False):
 
 
 def so3_rotation_angle(
-        R: torch.Tensor,
-        eps: float = 1e-4,
-        cos_angle: bool = False,
-        cos_bound: float = 1e-4,
+    R: torch.Tensor,
+    eps: float = 1e-4,
+    cos_angle: bool = False,
+    cos_bound: float = 1e-4,
 ) -> torch.Tensor:
     """
     Calculates angles (in radians) of a batch of rotation matrices `R` with
@@ -111,7 +111,7 @@ def so3_exp_map(log_rot: torch.Tensor, eps: float = 0.0001) -> torch.Tensor:
 
 
 def _so3_exp_map(
-        log_rot: torch.Tensor, eps: float = 0.0001
+    log_rot: torch.Tensor, eps: float = 0.0001
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     A helper function that computes the so3 exponential map and,
@@ -133,9 +133,9 @@ def _so3_exp_map(
 
     R = (
         # pyre-fixme[16]: `float` has no attribute `__getitem__`.
-            fac1[:, None, None] * skews
-            + fac2[:, None, None] * skews_square
-            + torch.eye(3, dtype=log_rot.dtype, device=log_rot.device)[None]
+        fac1[:, None, None] * skews
+        + fac2[:, None, None] * skews_square
+        + torch.eye(3, dtype=log_rot.dtype, device=log_rot.device)[None]
     )
 
     return R, rot_angles, skews, skews_square
@@ -169,10 +169,7 @@ def so3_log_map(R, eps: float = 0.0001):
 
     phi_sin = phi.sin()
 
-    phi_denom = (
-            torch.clamp(phi_sin.abs(), eps) * phi_sin.sign()
-            + (phi_sin == 0).type_as(phi) * eps
-    )
+    phi_denom = torch.clamp(phi_sin.abs(), eps) * phi_sin.sign() + (phi_sin == 0).type_as(phi) * eps
 
     log_rot_hat = (phi / (2.0 * phi_denom))[:, None, None] * (R - R.permute(0, 2, 1))
     log_rot = hat_inv(log_rot_hat)

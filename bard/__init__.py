@@ -7,6 +7,7 @@ kinematics and dynamics algorithms with support for batch processing.
 
 try:
     from importlib.metadata import version
+
     __version__ = version("bard")
 except Exception:
     __version__ = "unknown"

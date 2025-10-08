@@ -151,8 +151,8 @@ def matrix_to_quaternion(matrix):
     # forall i; we pick the best-conditioned one (with the largest denominator)
 
     return quat_candidates[
-           F.one_hot(q_abs.argmax(dim=-1), num_classes=4) > 0.5, :  # pyre-ignore[16]
-           ].reshape(batch_dim + (4,))
+        F.one_hot(q_abs.argmax(dim=-1), num_classes=4) > 0.5, :  # pyre-ignore[16]
+    ].reshape(batch_dim + (4,))
 
 
 def _axis_angle_rotation(axis: str, angle):
@@ -208,9 +208,7 @@ def euler_angles_to_matrix(euler_angles, convention: str):
     return functools.reduce(torch.matmul, matrices)
 
 
-def _angle_from_tan(
-        axis: str, other_axis: str, data, horizontal: bool, tait_bryan: bool
-):
+def _angle_from_tan(axis: str, other_axis: str, data, horizontal: bool, tait_bryan: bool):
     """
     Extract the first or third Euler angle from the two members of
     the matrix which are positive constant times its sine and cosine.
@@ -274,26 +272,20 @@ def matrix_to_euler_angles(matrix, convention: str):
     i2 = _index_from_letter(convention[2])
     tait_bryan = i0 != i2
     if tait_bryan:
-        central_angle = torch.asin(
-            matrix[..., i0, i2] * (-1.0 if i0 - i2 in [-1, 2] else 1.0)
-        )
+        central_angle = torch.asin(matrix[..., i0, i2] * (-1.0 if i0 - i2 in [-1, 2] else 1.0))
     else:
         central_angle = torch.acos(matrix[..., i0, i0])
 
     o = (
-        _angle_from_tan(
-            convention[0], convention[1], matrix[..., i2], False, tait_bryan
-        ),
+        _angle_from_tan(convention[0], convention[1], matrix[..., i2], False, tait_bryan),
         central_angle,
-        _angle_from_tan(
-            convention[2], convention[1], matrix[..., i0, :], True, tait_bryan
-        ),
+        _angle_from_tan(convention[2], convention[1], matrix[..., i0, :], True, tait_bryan),
     )
     return torch.stack(o, -1)
 
 
 def random_quaternions(
-        n: int, dtype: Optional[torch.dtype] = None, device=None, requires_grad=False
+    n: int, dtype: Optional[torch.dtype] = None, device=None, requires_grad=False
 ):
     """
     Generate random quaternions representing rotations,
@@ -316,9 +308,7 @@ def random_quaternions(
     return o
 
 
-def random_rotations(
-        n: int, dtype: Optional[torch.dtype] = None, device=None, requires_grad=False
-):
+def random_rotations(n: int, dtype: Optional[torch.dtype] = None, device=None, requires_grad=False):
     """
     Generate random rotations as 3x3 rotation matrices.
 
@@ -333,15 +323,11 @@ def random_rotations(
     Returns:
         Rotation matrices as tensor of shape (n, 3, 3).
     """
-    quaternions = random_quaternions(
-        n, dtype=dtype, device=device, requires_grad=requires_grad
-    )
+    quaternions = random_quaternions(n, dtype=dtype, device=device, requires_grad=requires_grad)
     return quaternion_to_matrix(quaternions)
 
 
-def random_rotation(
-        dtype: Optional[torch.dtype] = None, device=None, requires_grad=False
-):
+def random_rotation(dtype: Optional[torch.dtype] = None, device=None, requires_grad=False):
     """
     Generate a single random 3x3 rotation matrix.
 
@@ -466,7 +452,9 @@ def axis_and_d_to_pris_matrix(axis, d):
     mat33 = torch.eye(3).to(axis).expand(*batch_axes, 3, 3)
     pos = axis * d.unsqueeze(-1)
     mat44 = torch.cat((mat33, pos.unsqueeze(-1)), -1)
-    mat44 = torch.cat((mat44, torch.tensor([0.0, 0.0, 0.0, 1.0]).expand(*batch_axes, 1, 4).to(axis)), -2)
+    mat44 = torch.cat(
+        (mat44, torch.tensor([0.0, 0.0, 0.0, 1.0]).expand(*batch_axes, 1, 4).to(axis)), -2
+    )
     return mat44
 
 
@@ -485,7 +473,9 @@ def axis_and_angle_to_matrix_44(axis, theta):
     rot = axis_and_angle_to_matrix_33(axis, theta)
     batch_shape = axis.shape[:-1]
     mat44 = torch.cat((rot, torch.zeros(*batch_shape, 3, 1).to(axis)), -1)
-    mat44 = torch.cat((mat44, torch.tensor([0.0, 0.0, 0.0, 1.0]).expand(*batch_shape, 1, 4).to(axis)), -2)
+    mat44 = torch.cat(
+        (mat44, torch.tensor([0.0, 0.0, 0.0, 1.0]).expand(*batch_shape, 1, 4).to(axis)), -2
+    )
     return mat44
 
 
@@ -515,9 +505,14 @@ def axis_and_angle_to_matrix_33(axis, theta):
     r20 = kz * kx * one_minus_c - ky * s
     r21 = kz * ky * one_minus_c + kx * s
     r22 = c + kz * kz * one_minus_c
-    rot = torch.stack([torch.stack([r00, r01, r02], -1),
-                       torch.stack([r10, r11, r12], -1),
-                       torch.stack([r20, r21, r22], -1)], -2)
+    rot = torch.stack(
+        [
+            torch.stack([r00, r01, r02], -1),
+            torch.stack([r10, r11, r12], -1),
+            torch.stack([r20, r21, r22], -1),
+        ],
+        -2,
+    )
     return rot
 
 
@@ -536,8 +531,11 @@ def axis_angle_to_matrix(axis_angle):
     Returns:
         Rotation matrices as tensor of shape (..., 3, 3).
     """
-    warn('This is deprecated because it is slow. Use axis_and_angle_to_matrix_33 instead.',
-         DeprecationWarning, stacklevel=2)
+    warn(
+        "This is deprecated because it is slow. Use axis_and_angle_to_matrix_33 instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return quaternion_to_matrix(axis_angle_to_quaternion(axis_angle))
 
 
@@ -576,12 +574,12 @@ def axis_angle_to_quaternion(axis_angle):
     small_angles = angles.abs() < eps
     sin_half_angles_over_angles = torch.empty_like(angles)
     sin_half_angles_over_angles[~small_angles] = (
-            torch.sin(half_angles[~small_angles]) / angles[~small_angles]
+        torch.sin(half_angles[~small_angles]) / angles[~small_angles]
     )
     # for x small, sin(x/2) is about x/2 - (x/2)^3/6
     # so sin(x/2)/x is about 1/2 - (x*x)/48
     sin_half_angles_over_angles[small_angles] = (
-            0.5 - (angles[small_angles] * angles[small_angles]) / 48
+        0.5 - (angles[small_angles] * angles[small_angles]) / 48
     )
     quaternions = torch.cat(
         [torch.cos(half_angles), axis_angle * sin_half_angles_over_angles], dim=-1
@@ -610,12 +608,12 @@ def quaternion_to_axis_angle(quaternions):
     small_angles = angles.abs() < eps
     sin_half_angles_over_angles = torch.empty_like(angles)
     sin_half_angles_over_angles[~small_angles] = (
-            torch.sin(half_angles[~small_angles]) / angles[~small_angles]
+        torch.sin(half_angles[~small_angles]) / angles[~small_angles]
     )
     # for x small, sin(x/2) is about x/2 - (x/2)^3/6
     # so sin(x/2)/x is about 1/2 - (x*x)/48
     sin_half_angles_over_angles[small_angles] = (
-            0.5 - (angles[small_angles] * angles[small_angles]) / 48
+        0.5 - (angles[small_angles] * angles[small_angles]) / 48
     )
     return quaternions[..., 1:] / sin_half_angles_over_angles
 
@@ -699,36 +697,36 @@ _NEXT_AXIS = [1, 2, 0, 1]
 
 # map axes strings to/from tuples of inner axis, parity, repetition, frame
 _AXES2TUPLE = {
-    'sxyz': (0, 0, 0, 0),
-    'sxyx': (0, 0, 1, 0),
-    'sxzy': (0, 1, 0, 0),
-    'sxzx': (0, 1, 1, 0),
-    'syzx': (1, 0, 0, 0),
-    'syzy': (1, 0, 1, 0),
-    'syxz': (1, 1, 0, 0),
-    'syxy': (1, 1, 1, 0),
-    'szxy': (2, 0, 0, 0),
-    'szxz': (2, 0, 1, 0),
-    'szyx': (2, 1, 0, 0),
-    'szyz': (2, 1, 1, 0),
-    'rzyx': (0, 0, 0, 1),
-    'rxyx': (0, 0, 1, 1),
-    'ryzx': (0, 1, 0, 1),
-    'rxzx': (0, 1, 1, 1),
-    'rxzy': (1, 0, 0, 1),
-    'ryzy': (1, 0, 1, 1),
-    'rzxy': (1, 1, 0, 1),
-    'ryxy': (1, 1, 1, 1),
-    'ryxz': (2, 0, 0, 1),
-    'rzxz': (2, 0, 1, 1),
-    'rxyz': (2, 1, 0, 1),
-    'rzyz': (2, 1, 1, 1),
+    "sxyz": (0, 0, 0, 0),
+    "sxyx": (0, 0, 1, 0),
+    "sxzy": (0, 1, 0, 0),
+    "sxzx": (0, 1, 1, 0),
+    "syzx": (1, 0, 0, 0),
+    "syzy": (1, 0, 1, 0),
+    "syxz": (1, 1, 0, 0),
+    "syxy": (1, 1, 1, 0),
+    "szxy": (2, 0, 0, 0),
+    "szxz": (2, 0, 1, 0),
+    "szyx": (2, 1, 0, 0),
+    "szyz": (2, 1, 1, 0),
+    "rzyx": (0, 0, 0, 1),
+    "rxyx": (0, 0, 1, 1),
+    "ryzx": (0, 1, 0, 1),
+    "rxzx": (0, 1, 1, 1),
+    "rxzy": (1, 0, 0, 1),
+    "ryzy": (1, 0, 1, 1),
+    "rzxy": (1, 1, 0, 1),
+    "ryxy": (1, 1, 1, 1),
+    "ryxz": (2, 0, 0, 1),
+    "rzxz": (2, 0, 1, 1),
+    "rxyz": (2, 1, 0, 1),
+    "rzyz": (2, 1, 1, 1),
 }
 
 _TUPLE2AXES = {v: k for k, v in _AXES2TUPLE.items()}
 
 
-def quaternion_from_euler(rpy, axes='sxyz'):
+def quaternion_from_euler(rpy, axes="sxyz"):
     """
     Return quaternion from Euler angles and axis sequence.
     Taken from https://github.com/cgohlke/transformations/blob/master/transformations/transformations.py#L1238

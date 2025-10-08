@@ -6,7 +6,7 @@ from lxml import etree
 
 def xml_string(rootXml, addHeader=True):
     # Meh
-    xmlString = etree.tostring(rootXml, pretty_print=True, encoding='unicode')
+    xmlString = etree.tostring(rootXml, pretty_print=True, encoding="unicode")
     if addHeader:
         xmlString = '<?xml version="1.0"?>\n' + xmlString
     return xmlString
@@ -25,11 +25,11 @@ def node_add(doc, sub):
         doc.append(sub)  # This screws up the rest of the tree for prettyprint
         return sub
     else:
-        raise Exception('Invalid sub value')
+        raise Exception("Invalid sub value")
 
 
 def pfloat(x):
-    return str(x).rstrip('.')
+    return str(x).rstrip(".")
 
 
 def xml_children(node):
@@ -49,7 +49,7 @@ def isstring(obj):
 
 
 def to_yaml(obj):
-    """ Simplify yaml representation for pretty printing """
+    """Simplify yaml representation for pretty printing"""
     # Is there a better way to do this by adding a representation with
     # yaml.Dumper?
     # Ordered dict: http://pyyaml.org/ticket/29#comment:11
@@ -57,15 +57,15 @@ def to_yaml(obj):
         out = str(obj)
     elif type(obj) in [int, float, bool]:
         return obj
-    elif hasattr(obj, 'to_yaml'):
+    elif hasattr(obj, "to_yaml"):
         out = obj.to_yaml()
     elif isinstance(obj, etree._Element):
         out = etree.tostring(obj, pretty_print=True)
     elif type(obj) == dict:
         out = {}
-        for (var, value) in obj.items():
+        for var, value in obj.items():
             out[str(var)] = to_yaml(value)
-    elif hasattr(obj, 'tolist'):
+    elif hasattr(obj, "tolist"):
         # For numpy objects
         out = to_yaml(obj.tolist())
     elif isinstance(obj, collections.Iterable):

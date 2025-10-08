@@ -1,5 +1,3 @@
-
-
 from typing import Any, Dict, Optional, Tuple
 import torch
 from bard.core import chain
@@ -19,29 +17,28 @@ from .utils import (
 
 
 class Jacobian:
-    
-    
-    def __init__(self, chain: chain.Chain, max_batch_size: int = 1024,
-                 compile_enabled: Optional[bool] = False,
-                 compile_kwargs: Optional[Dict[str, Any]] = {"mode": "reduce-overhead"}):
+
+    def __init__(
+        self,
+        chain: chain.Chain,
+        max_batch_size: int = 1024,
+        compile_enabled: Optional[bool] = False,
+        compile_kwargs: Optional[Dict[str, Any]] = {"mode": "reduce-overhead"},
+    ):
         self.chain = chain
         self.max_batch_size = max_batch_size
         self.dtype = chain.dtype
         self.device = chain.device
-        
+
         self.n_nodes = chain.n_nodes
         self.n_joints = chain.n_joints
         self.is_floating_base = chain.has_floating_base
         self.nv = 6 + self.n_joints if self.is_floating_base else self.n_joints
-        
+
         # Pre-allocate Jacobian matrices (the main memory consumers)
-        self.J_local = torch.zeros(
-            max_batch_size, 6, self.nv, dtype=self.dtype, device=self.device
-        )
-        self.J_world = torch.zeros(
-            max_batch_size, 6, self.nv, dtype=self.dtype, device=self.device
-        )
-        
+        self.J_local = torch.zeros(max_batch_size, 6, self.nv, dtype=self.dtype, device=self.device)
+        self.J_world = torch.zeros(max_batch_size, 6, self.nv, dtype=self.dtype, device=self.device)
+
         # Pre-compute static data
         self.axes_norm = chain.axes / chain.axes.norm(dim=-1, keepdim=True).clamp_min(1e-12)
 
@@ -63,22 +60,22 @@ class Jacobian:
         if compile_kwargs:
             self._compile_kwargs.update(compile_kwargs)
         self._setup_calc_callable()
-        
+
     def to(self, dtype: Optional[torch.dtype] = None, device: Optional[torch.device] = None):
-        
+
         if dtype is not None:
             self.dtype = dtype
         if device is not None:
             self.device = device
-        
+
         self.J_local = self.J_local.to(dtype=self.dtype, device=self.device)
         self.J_world = self.J_world.to(dtype=self.dtype, device=self.device)
         self.axes_norm = self.axes_norm.to(dtype=self.dtype, device=self.device)
-        
+
         self._setup_calc_callable()
 
         return self
-    
+
     def calc(
         self,
         q: torch.Tensor,
@@ -92,7 +89,7 @@ class Jacobian:
                 f"Batch size {batch_size} exceeds max_batch_size {self.max_batch_size}..."
             )
         return self._calc_callable(q, frame_id, reference_frame, return_eef_pose)
-    
+
     def _setup_calc_callable(self):
         fn = self._calc_impl
         if self._compile_enabled:
@@ -107,20 +104,20 @@ class Jacobian:
         return_eef_pose: bool = False,
     ) -> torch.Tensor:
         batch_size = q.shape[0]
-        
+
         if batch_size > self.max_batch_size:
             raise ValueError(
                 f"Batch size {batch_size} exceeds max_batch_size {self.max_batch_size}. "
                 f"Create a new Jacobian instance with larger max_batch_size."
             )
-        
+
         # Get path from root to target frame as Python list
         path_nodes = self.chain.parents_indices_list[frame_id]
-        
+
         # Get sliced view of pre-allocated Jacobian
         J_local = self.J_local[:batch_size, :, :]
         J_local.zero_()
-        
+
         # Split configuration
         if self.is_floating_base:
             q_base, q_joints = q[:, :7], q[:, 7:]
@@ -194,9 +191,9 @@ class Jacobian:
             T_world_to_joint_origin = T_world_to_current @ T_joint_offset
 
             # Store information for actuated joints
-            is_revolute = (joint_type_idx == Joint.TYPES.index('revolute'))
-            is_prismatic = (joint_type_idx == Joint.TYPES.index('prismatic'))
-            
+            is_revolute = joint_type_idx == Joint.TYPES.index("revolute")
+            is_prismatic = joint_type_idx == Joint.TYPES.index("prismatic")
+
             if is_revolute or is_prismatic:
                 world_T_joint_origin.append(T_world_to_joint_origin)
                 active_joint_types.append(joint_type_idx)
@@ -245,7 +242,7 @@ class Jacobian:
             axis_local_unit = normalize_axis(axis_local_batch)
 
             twist_joint = torch.zeros((batch_size, 6), dtype=self.dtype, device=self.device)
-            if jtype == Joint.TYPES.index('revolute'):
+            if jtype == Joint.TYPES.index("revolute"):
                 twist_joint[:, 3:] = axis_local_unit  # Angular velocity
             else:  # prismatic
                 twist_joint[:, :3] = axis_local_unit  # Linear velocity

@@ -32,19 +32,20 @@ print(f"Device: {DEVICE}, Dtype: {DTYPE}")
 # Setup
 # ============================================================================
 
+
 def load_robot():
     """Load robot in both Bard and Pinocchio."""
     with open(URDF_PATH, "r") as f:
         urdf_string = f.read()
-    
+
     # Bard
     chain = build_chain_from_urdf(urdf_string, floating_base=True)
     chain = chain.to(dtype=DTYPE, device=DEVICE)
-    
+
     # Pinocchio
     pin_model = pin.buildModelFromUrdf(str(URDF_PATH), pin.JointModelFreeFlyer())
     pin_data = pin_model.createData()
-    
+
     return chain, pin_model, pin_data
 
 
@@ -55,21 +56,20 @@ def generate_random_state(chain, batch_size):
     q[:, 3:7] = q[:, 3:7] / torch.linalg.norm(q[:, 3:7], dim=1, keepdim=True)
     qd = torch.randn(batch_size, chain.nv, device=DEVICE, dtype=DTYPE)
     qdd = torch.randn(batch_size, chain.nv, device=DEVICE, dtype=DTYPE)
-    
+
     # Pinocchio format (convert quaternion from [qw,qx,qy,qz] to [qx,qy,qz,qw])
     q_pin = []
     for i in range(batch_size):
         q_i = q[i].cpu().numpy()
-        q_pin.append(np.concatenate([
-            q_i[:3],           # tx, ty, tz
-            q_i[4:7],          # qx, qy, qz
-            q_i[3:4],          # qw
-            q_i[7:]            # joints
-        ]))
-    
+        q_pin.append(
+            np.concatenate(
+                [q_i[:3], q_i[4:7], q_i[3:4], q_i[7:]]  # tx, ty, tz  # qx, qy, qz  # qw  # joints
+            )
+        )
+
     qd_pin = qd.cpu().numpy()
     qdd_pin = qdd.cpu().numpy()
-    
+
     return q, qd, qdd, q_pin, qd_pin, qdd_pin
 
 
@@ -77,41 +77,42 @@ def generate_random_state(chain, batch_size):
 # Benchmarking
 # ============================================================================
 
+
 def benchmark_bard(rnea, q, qd, qdd, num_repeats, warmup_iters):
     """Benchmark Bard RNEA."""
     # Warmup
     for _ in range(warmup_iters):
         _ = rnea.calc(q, qd, qdd)
-    
+
     if DEVICE == "cuda":
         torch.cuda.synchronize()
-    
+
     # Benchmark
     times = []
     for _ in range(num_repeats):
         if DEVICE == "cuda":
             torch.cuda.synchronize()
-        
+
         start = time.perf_counter()
         _ = rnea.calc(q, qd, qdd)
-        
+
         if DEVICE == "cuda":
             torch.cuda.synchronize()
-        
+
         times.append(time.perf_counter() - start)
-    
+
     return np.array(times)
 
 
 def benchmark_pinocchio(model, data, q_list, qd_np, qdd_np, num_repeats, warmup_iters):
     """Benchmark Pinocchio RNEA."""
     batch_size = len(q_list)
-    
+
     # Warmup
     for _ in range(warmup_iters):
         for i in range(batch_size):
             _ = pin.rnea(model, data, q_list[i], qd_np[i], qdd_np[i])
-    
+
     # Benchmark
     times = []
     for _ in range(num_repeats):
@@ -119,7 +120,7 @@ def benchmark_pinocchio(model, data, q_list, qd_np, qdd_np, num_repeats, warmup_
         for i in range(batch_size):
             _ = pin.rnea(model, data, q_list[i], qd_np[i], qdd_np[i])
         times.append(time.perf_counter() - start)
-    
+
     return np.array(times)
 
 
@@ -127,15 +128,15 @@ def verify_correctness(rnea, q, qd, qdd, pin_model, pin_data, q_pin, qd_pin, qdd
     """Verify that Bard and Pinocchio produce similar results."""
     tau_bard = rnea.calc(q[:1], qd[:1], qdd[:1])[0].cpu().numpy()
     tau_pin = pin.rnea(pin_model, pin_data, q_pin[0], qd_pin[0], qdd_pin[0])
-    
+
     max_diff = np.abs(tau_bard - tau_pin).max()
     print(f"Max difference: {max_diff:.2e}")
-    
+
     tolerance = 1e-6
     if max_diff > tolerance:
         print(f"WARNING: Results differ by more than {tolerance:.2e}")
         return False
-    
+
     print("✓ Correctness verified")
     return True
 
@@ -144,73 +145,78 @@ def verify_correctness(rnea, q, qd, qdd, pin_model, pin_data, q_pin, qd_pin, qdd
 # Main
 # ============================================================================
 
+
 def main():
     print("=" * 70)
     print("RNEA Benchmark: Bard (Class-based) vs Pinocchio")
     print("=" * 70)
-    
+
     # Load robot
     chain, pin_model, pin_data = load_robot()
-    
+
     # Create RNEA object once with max batch size
     max_batch = max(BATCH_SIZES)
     rnea = RNEA(chain, max_batch_size=max_batch)
-    
+
     print(f"\nRNEA object created with max_batch_size={max_batch}")
     print(f"Robot: {chain.n_joints} joints, {chain.n_nodes} nodes")
-    
+
     # Results storage
     results = []
-    
+
     # Benchmark each batch size
     for batch_size in BATCH_SIZES:
         print(f"\n{'─' * 70}")
         print(f"Batch Size: {batch_size}")
         print(f"{'─' * 70}")
-        
+
         # Generate data
         q, qd, qdd, q_pin, qd_pin, qdd_pin = generate_random_state(chain, batch_size)
-        
+
         # Verify correctness on first batch
         if batch_size == BATCH_SIZES[0]:
             print("\nVerifying correctness...")
-            if not verify_correctness(rnea, q, qd, qdd, pin_model, pin_data, 
-                                     q_pin, qd_pin, qdd_pin):
+            if not verify_correctness(
+                rnea, q, qd, qdd, pin_model, pin_data, q_pin, qd_pin, qdd_pin
+            ):
                 print("ERROR: Correctness check failed!")
                 return
-        
+
         # Benchmark Bard
         print("\nBenchmarking Bard...")
         bard_times = benchmark_bard(rnea, q, qd, qdd, NUM_REPEATS, WARMUP_ITERS)
         bard_mean = np.mean(bard_times) * 1000  # Convert to ms
         bard_std = np.std(bard_times) * 1000
-        
+
         # Benchmark Pinocchio
         print("Benchmarking Pinocchio...")
-        pin_times = benchmark_pinocchio(pin_model, pin_data, q_pin, qd_pin, qdd_pin, 
-                                       NUM_REPEATS, WARMUP_ITERS)
+        pin_times = benchmark_pinocchio(
+            pin_model, pin_data, q_pin, qd_pin, qdd_pin, NUM_REPEATS, WARMUP_ITERS
+        )
         pin_mean = np.mean(pin_times) * 1000  # Convert to ms
         pin_std = np.std(pin_times) * 1000
-        
+
         # Calculate speedup
         speedup = pin_mean / bard_mean
-        
+
         # Store results
-        results.append({
-            'batch': batch_size,
-            'bard_mean': bard_mean,
-            'bard_std': bard_std,
-            'pin_mean': pin_mean,
-            'pin_std': pin_std,
-            'speedup': speedup
-        })
-        
+        results.append(
+            {
+                "batch": batch_size,
+                "bard_mean": bard_mean,
+                "bard_std": bard_std,
+                "pin_mean": pin_mean,
+                "pin_std": pin_std,
+                "speedup": speedup,
+            }
+        )
+
         # Print results
         print(f"\nResults:")
         print(f"  Bard:      {bard_mean:7.2f} ± {bard_std:5.2f} ms")
         print(f"  Pinocchio: {pin_mean:7.2f} ± {pin_std:5.2f} ms")
         print(f"  Speedup:   {speedup:7.2f}x")
-    
+
     # Print summary table
     print("\n" + "=" * 70)
     print("SUMMARY")
@@ -218,10 +224,12 @@ def main():
     print(f"{'Batch':<8} {'Bard (ms)':<15} {'Pinocchio (ms)':<15} {'Speedup'}")
     print("─" * 70)
     for r in results:
-        print(f"{r['batch']:<8} "
-              f"{r['bard_mean']:6.2f} ± {r['bard_std']:5.2f}  "
-              f"{r['pin_mean']:7.2f} ± {r['pin_std']:5.2f}  "
-              f"{r['speedup']:7.2f}x")
+        print(
+            f"{r['batch']:<8} "
+            f"{r['bard_mean']:6.2f} ± {r['bard_std']:5.2f}  "
+            f"{r['pin_mean']:7.2f} ± {r['pin_std']:5.2f}  "
+            f"{r['speedup']:7.2f}x"
+        )
     print("=" * 70)
 
 

@@ -24,23 +24,23 @@ class Joint:
         effort_limits (Optional[Tuple[float, float]]): A tuple of (lower, upper)
             force or torque limits. None if unbounded.
     """
-    
-    TYPES = ['fixed', 'revolute', 'prismatic']
+
+    TYPES = ["fixed", "revolute", "prismatic"]
 
     def __init__(
         self,
         name: Optional[str] = None,
         offset: Optional[object] = None,
-        joint_type: str = 'fixed',
+        joint_type: str = "fixed",
         axis: Tuple[float, float, float] = (0.0, 0.0, 1.0),
         dtype: torch.dtype = torch.float32,
         device: str = "cpu",
         limits: Optional[Tuple[float, float]] = None,
         velocity_limits: Optional[Tuple[float, float]] = None,
-        effort_limits: Optional[Tuple[float, float]] = None
+        effort_limits: Optional[Tuple[float, float]] = None,
     ):
         """Initializes a Joint object.
-        
+
         Args:
             name (Optional[str], optional): The name/identifier of the joint.
                 Defaults to "unnamed_joint".
@@ -60,20 +60,19 @@ class Joint:
                 Defaults to None.
             effort_limits (Optional[Tuple[float, float]], optional): Effort (force/torque)
                 limits. Defaults to None.
-            
+
         Raises:
             RuntimeError: If `joint_type` is not one of the supported types.
         """
         self.name = name if name is not None else "unnamed_joint"
         self.offset = offset
-        
+
         if joint_type not in self.TYPES:
             raise RuntimeError(
-                f"Joint '{name}' has type '{joint_type}', "
-                f"but only {self.TYPES} are supported"
+                f"Joint '{name}' has type '{joint_type}', " f"but only {self.TYPES} are supported"
             )
         self.joint_type = joint_type
-        
+
         if axis is None:
             self.axis = torch.tensor([0.0, 0.0, 1.0], dtype=dtype, device=device)
         else:
@@ -81,20 +80,18 @@ class Joint:
                 self.axis = axis.clone().detach().to(dtype=dtype, device=device)
             else:
                 self.axis = torch.tensor(axis, dtype=dtype, device=device)
-        
+
         axis_norm = self.axis.norm()
         if axis_norm > 1e-12:
             self.axis = self.axis / axis_norm
-        
+
         self.limits = limits
         self.velocity_limits = velocity_limits
         self.effort_limits = effort_limits
 
     def to(
-        self,
-        dtype: Optional[torch.dtype] = None,
-        device: Optional[torch.device] = None
-    ) -> 'Joint':
+        self, dtype: Optional[torch.dtype] = None, device: Optional[torch.device] = None
+    ) -> "Joint":
         """Moves all tensor data in the joint to a specified device/dtype.
 
         Args:
@@ -107,24 +104,24 @@ class Joint:
         if dtype is not None or device is not None:
             kwargs = {}
             if dtype is not None:
-                kwargs['dtype'] = dtype
+                kwargs["dtype"] = dtype
             if device is not None:
-                kwargs['device'] = device
+                kwargs["device"] = device
             self.axis = self.axis.to(**kwargs)
-        
+
         if self.offset is not None:
             self.offset = self.offset.to(dtype=dtype, device=device)
-        
+
         return self
 
     def clamp(self, joint_position: torch.Tensor) -> torch.Tensor:
         """Clamps a given joint position to the joint's defined limits.
-        
+
         If the joint has no limits, the input position is returned unchanged.
-        
+
         Args:
             joint_position (torch.Tensor): The current joint position(s) to clamp.
-            
+
         Returns:
             torch.Tensor: The clamped joint position(s).
         """
@@ -135,7 +132,9 @@ class Joint:
     def __repr__(self) -> str:
         """Returns a concise string representation of the Joint."""
         has_limits = self.limits is not None
-        return (f"Joint(name='{self.name}', "
-                f"type='{self.joint_type}', "
-                f"axis={self.axis.tolist()}, "
-                f"has_limits={has_limits})")
+        return (
+            f"Joint(name='{self.name}', "
+            f"type='{self.joint_type}', "
+            f"axis={self.axis.tolist()}, "
+            f"has_limits={has_limits})"
+        )

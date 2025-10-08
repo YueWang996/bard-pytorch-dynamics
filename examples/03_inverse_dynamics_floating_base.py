@@ -6,6 +6,7 @@ from bard.core.dynamics import RNEA
 script_dir = Path(__file__).parent
 urdf_path = script_dir / "example_robots/go2_description/urdf/go2.urdf"
 
+
 def main():
     """
     An example of computing inverse dynamics (RNEA) for a floating-base robot.
@@ -20,7 +21,7 @@ def main():
     # 1. Build the chain with floating_base=True
     chain = build_chain_from_urdf(urdf_string, floating_base=True).to(dtype=torch.float64)
     print(f"Floating-base robot loaded. nq={chain.nq}, nv={chain.nv}")
-    
+
     # Instantiate the RNEA class once
     rnea = RNEA(chain, max_batch_size=1)
 
@@ -48,6 +49,7 @@ def main():
     print("\n--- Inverse Dynamics Results ---")
     print(f"Computed Base Wrench (Force, Torque): \n{base_wrench.numpy()}")
     print(f"\nComputed Joint Torques: \n{joint_torques.numpy()}")
+
 
 if __name__ == "__main__":
     main()

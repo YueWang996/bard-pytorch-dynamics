@@ -6,6 +6,7 @@ primary entry point for creating a robot model from a URDF file's content. It
 handles parsing of links, joints, and inertial properties, and supports the
 creation of both fixed-base and floating-base robot representations.
 """
+
 from .urdf_parser_py.urdf import URDF, Mesh, Cylinder, Box, Sphere
 from bard.structures import Frame, Joint, Link, Visual
 from bard.core import chain
@@ -14,10 +15,10 @@ import bard.transforms as tf
 
 
 JOINT_TYPE_MAP = {
-    'revolute': 'revolute',
-    'continuous': 'revolute',
-    'prismatic': 'prismatic',
-    'fixed': 'fixed'
+    "revolute": "revolute",
+    "continuous": "revolute",
+    "prismatic": "prismatic",
+    "fixed": "fixed",
 }
 
 
@@ -35,11 +36,7 @@ def _convert_inertial(inertial):
         return None
     origin = _convert_transform(inertial.origin)
     mass = inertial.mass
-    inertia = torch.tensor(
-        inertial.inertia.to_matrix(),
-        dtype=torch.float32,
-        device="cpu"
-    )
+    inertia = torch.tensor(inertial.inertia.to_matrix(), dtype=torch.float32, device="cpu")
     return (origin, mass, inertia)
 
 
@@ -47,9 +44,9 @@ def _convert_visual(visual):
     """Converts a URDF <visual> tag into a bard Visual object."""
     if visual is None or visual.geometry is None:
         return Visual()
-    
+
     v_tf = _convert_transform(visual.origin)
-    
+
     if isinstance(visual.geometry, Mesh):
         g_type = "mesh"
         g_param = (visual.geometry.filename, visual.geometry.scale)
@@ -65,7 +62,7 @@ def _convert_visual(visual):
     else:
         g_type = None
         g_param = None
-    
+
     return Visual(v_tf, g_type, g_param)
 
 
@@ -87,17 +84,17 @@ def _build_chain_recurse(root_frame, lmap, joints):
                 limits = (j.limit.lower, j.limit.upper)
             except AttributeError:
                 limits = None
-            
+
             try:
                 velocity_limits = (-j.limit.velocity, j.limit.velocity)
             except AttributeError:
                 velocity_limits = None
-            
+
             try:
                 effort_limits = (-j.limit.effort, j.limit.effort)
             except AttributeError:
                 effort_limits = None
-            
+
             child_frame = Frame(j.child)
             child_frame.joint = Joint(
                 j.name,
@@ -106,20 +103,20 @@ def _build_chain_recurse(root_frame, lmap, joints):
                 axis=j.axis,
                 limits=limits,
                 velocity_limits=velocity_limits,
-                effort_limits=effort_limits
+                effort_limits=effort_limits,
             )
-            
+
             link = lmap[j.child]
             child_frame.link = Link(
                 link.name,
                 offset=_convert_transform(link.origin),
                 inertial=_convert_inertial(link.inertial),
-                visuals=[_convert_visual(link.visual)]
+                visuals=[_convert_visual(link.visual)],
             )
-            
+
             child_frame.children = _build_chain_recurse(child_frame, lmap, joints)
             children.append(child_frame)
-    
+
     return children
 
 
@@ -153,7 +150,7 @@ def build_chain_from_urdf(
             vector `q` will have the following format:
             - **Fixed-base**: `q = [joint_angle_1, ...]`
             - **Floating-base**: `q = [tx, ty, tz, qw, qx, qy, qz, joint_angle_1, ...]`
-    
+
     Raises:
         ValueError: If a root link cannot be determined from the URDF structure.
     """
@@ -165,10 +162,12 @@ def build_chain_from_urdf(
     # Find URDF root link (a parent that is never a child)
     is_child = {j.child for j in joints}
     root_links = [j.parent for j in joints if j.parent not in is_child]
-    
+
     if not root_links:
-        raise ValueError("Could not find a root link in the URDF (a link that is a parent but not a child).")
-    
+        raise ValueError(
+            "Could not find a root link in the URDF (a link that is a parent but not a child)."
+        )
+
     root_link_name = root_links[0]
     root_link = lmap[root_link_name]
 
@@ -186,10 +185,7 @@ def build_chain_from_urdf(
     # Optionally wrap with a synthetic floating base
     if floating_base:
         base_frame = Frame(base_frame_name)
-        base_frame.joint = Joint(
-            name=f"{base_frame_name}_joint",
-            joint_type="fixed"
-        )
+        base_frame.joint = Joint(name=f"{base_frame_name}_joint", joint_type="fixed")
         base_frame.link = Link(base_frame_name, tf.Transform3d())
         base_frame.children = [root_frame]
         root_frame = base_frame
@@ -200,5 +196,5 @@ def build_chain_from_urdf(
         floating_base=floating_base,
         base_name=base_frame_name,
         dtype=dtype,
-        device=device
+        device=device,
     )

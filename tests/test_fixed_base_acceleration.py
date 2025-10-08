@@ -13,7 +13,9 @@ from bard.core.kinematics import end_effector_acceleration
 from conftest import compare_transforms
 
 
-@pytest.mark.skipif(not hasattr(pin, 'buildModelFromXML'), reason="Pinocchio fixtures not fully available")
+@pytest.mark.skipif(
+    not hasattr(pin, "buildModelFromXML"), reason="Pinocchio fixtures not fully available"
+)
 class TestAccelerationFixedBase:
     """Test suite for fixed-base robot end-effector acceleration."""
 
@@ -24,11 +26,13 @@ class TestAccelerationFixedBase:
         return model, model.createData()
 
     @pytest.mark.parametrize("reference_frame", ["world", "local"])
-    def test_acceleration_random_states(self, urdf_string, pin_model, dtype, device, reference_frame):
+    def test_acceleration_random_states(
+        self, urdf_string, pin_model, dtype, device, reference_frame
+    ):
         """Verifies acceleration at random states against Pinocchio."""
         bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model
-        
+
         torch.manual_seed(1337)
         np.random.seed(1337)
 
@@ -42,21 +46,33 @@ class TestAccelerationFixedBase:
             q_bard = torch.rand(bard_chain.n_joints, device=device, dtype=dtype)
             qd_bard = torch.randn(bard_chain.n_joints, device=device, dtype=dtype)
             qdd_bard = torch.randn(bard_chain.n_joints, device=device, dtype=dtype)
-            
+
             q_pin = q_bard.cpu().numpy()
             qd_pin = qd_bard.cpu().numpy()
             qdd_pin = qdd_bard.cpu().numpy()
 
             # Bard acceleration
-            a_bard = end_effector_acceleration(bard_chain, q_bard, qd_bard, qdd_bard, 
-                                               bard_frame_idx, reference_frame=reference_frame)
+            a_bard = end_effector_acceleration(
+                bard_chain,
+                q_bard,
+                qd_bard,
+                qdd_bard,
+                bard_frame_idx,
+                reference_frame=reference_frame,
+            )
             a_bard_np = a_bard.cpu().numpy()
 
             # Pinocchio acceleration
             pin.forwardKinematics(pin_model_obj, pin_data, q_pin, qd_pin, qdd_pin)
-            pin_ref_frame = pin.ReferenceFrame.WORLD if reference_frame == "world" else pin.ReferenceFrame.LOCAL
-            a_pin = pin.getFrameAcceleration(pin_model_obj, pin_data, pin_frame_id, pin_ref_frame).vector
+            pin_ref_frame = (
+                pin.ReferenceFrame.WORLD if reference_frame == "world" else pin.ReferenceFrame.LOCAL
+            )
+            a_pin = pin.getFrameAcceleration(
+                pin_model_obj, pin_data, pin_frame_id, pin_ref_frame
+            ).vector
 
             # Compare results
             tol = 1e-4 if dtype == torch.float32 else 1e-7
-            assert np.allclose(a_bard_np, a_pin, atol=tol), f"Acceleration mismatch in '{reference_frame}' frame"
+            assert np.allclose(
+                a_bard_np, a_pin, atol=tol
+            ), f"Acceleration mismatch in '{reference_frame}' frame"

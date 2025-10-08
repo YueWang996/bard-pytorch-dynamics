@@ -2,8 +2,14 @@ import torch
 from bard.transforms.rotation_conversions import axis_and_angle_to_matrix_33
 
 
-def sample_perturbations(T, num_perturbations, radian_sigma, translation_sigma, axis_of_rotation=None,
-                         translation_perpendicular_to_axis_of_rotation=True):
+def sample_perturbations(
+    T,
+    num_perturbations,
+    radian_sigma,
+    translation_sigma,
+    axis_of_rotation=None,
+    translation_perpendicular_to_axis_of_rotation=True,
+):
     """
     Sample perturbations around the given transform. The translation and rotation are sampled independently from
     0 mean gaussians. The angular perturbations' directions are uniformly sampled from the unit sphere while its

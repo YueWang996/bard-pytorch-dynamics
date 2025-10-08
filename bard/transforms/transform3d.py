@@ -7,8 +7,12 @@ from typing import Optional
 
 import torch
 
-from .rotation_conversions import _axis_angle_rotation, matrix_to_quaternion, quaternion_to_matrix, \
-    euler_angles_to_matrix
+from .rotation_conversions import (
+    _axis_angle_rotation,
+    matrix_to_quaternion,
+    quaternion_to_matrix,
+    euler_angles_to_matrix,
+)
 from bard.transforms.perturbation import sample_perturbations
 
 DEFAULT_EULER_CONVENTION = "XYZ"
@@ -143,13 +147,13 @@ class Transform3d:
     """
 
     def __init__(
-            self,
-            default_batch_size=1,
-            dtype: torch.dtype = torch.float32,
-            device='cpu',
-            matrix: Optional[torch.Tensor] = None,
-            rot: Optional[typing.Iterable] = None,
-            pos: Optional[typing.Iterable] = None,
+        self,
+        default_batch_size=1,
+        dtype: torch.dtype = torch.float32,
+        device="cpu",
+        matrix: Optional[torch.Tensor] = None,
+        rot: Optional[typing.Iterable] = None,
+        pos: Optional[typing.Iterable] = None,
     ):
         """
         Args:
@@ -174,14 +178,16 @@ class Transform3d:
                 matrix argument, if any.
         """
         if matrix is None:
-            self._matrix = torch.eye(4, dtype=dtype, device=device).unsqueeze(0).repeat(default_batch_size, 1, 1)
+            self._matrix = (
+                torch.eye(4, dtype=dtype, device=device)
+                .unsqueeze(0)
+                .repeat(default_batch_size, 1, 1)
+            )
         else:
             if matrix.ndim not in (2, 3):
                 raise ValueError('"matrix" has to be a 2- or a 3-dimensional tensor.')
             if matrix.shape[-2] != 4 or matrix.shape[-1] != 4:
-                raise ValueError(
-                    '"matrix" has to be a tensor of shape (minibatch, 4, 4)'
-                )
+                raise ValueError('"matrix" has to be a tensor of shape (minibatch, 4, 4)')
             # set the device from matrix
             device = matrix.device
             self._matrix = matrix.view(-1, 4, 4)
@@ -226,7 +232,7 @@ class Transform3d:
         m = self.get_matrix()
         pos = m[:, :3, 3]
         rot = matrix_to_quaternion(m[:, :3, :3])
-        return "Transform3d(rot={}, pos={})".format(rot, pos).replace('\n       ', '')
+        return "Transform3d(rot={}, pos={})".format(rot, pos).replace("\n       ", "")
 
     def compose(self, *others):
         """
@@ -368,7 +374,9 @@ class Transform3d:
         if batch_to_batch:
             # Note: `normals` might be (N, P, 3), so we need to apply the (N, 3, 3) matrix `mat`
             # The @ operator handles this correctly.
-            normals_out = normals @ mat.transpose(-1, -2) # Standard formula for normals is (R^-1)^T
+            normals_out = normals @ mat.transpose(
+                -1, -2
+            )  # Standard formula for normals is (R^-1)^T
         else:
             normals_out = _broadcast_bmm(normals, mat.transpose(-1, -2))
 
@@ -400,7 +408,9 @@ class Transform3d:
             msg = "Expected shape_operators to have dim = 3 or dim = 4: got shape %r"
             raise ValueError(msg % (shape_operators.shape,))
         mat = self.inverse().get_matrix()[:, :3, :3]
-        shape_operators_out = _broadcast_bmm(mat.permute(0, 2, 1), _broadcast_bmm(shape_operators, mat))
+        shape_operators_out = _broadcast_bmm(
+            mat.permute(0, 2, 1), _broadcast_bmm(shape_operators, mat)
+        )
 
         # When transform is (1, 4, 4) and shape_operator is (P, 3, 3) return
         # shape_operators_out of shape (P, 3, 3)
@@ -550,9 +560,7 @@ class Scale(Transform3d):
 
 
 class Rotate(Transform3d):
-    def __init__(
-            self, R, dtype=torch.float32, device: str = "cpu", orthogonal_tol: float = 1e-5
-    ):
+    def __init__(self, R, dtype=torch.float32, device: str = "cpu", orthogonal_tol: float = 1e-5):
         """
         Create a new Transform3d representing 3D rotation using a rotation
         matrix as the input.
@@ -593,12 +601,12 @@ class Rotate(Transform3d):
 
 class RotateAxisAngle(Rotate):
     def __init__(
-            self,
-            angle,
-            axis: str = "X",
-            degrees: bool = True,
-            dtype=torch.float64,
-            device: str = "cpu",
+        self,
+        angle,
+        axis: str = "X",
+        degrees: bool = True,
+        dtype=torch.float64,
+        device: str = "cpu",
     ):
         """
         Create a new Transform3d representing 3D rotation about an axis

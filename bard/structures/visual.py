@@ -19,17 +19,17 @@ class Visual:
         geom_param (Optional[Union[Tuple, str]]): Parameters that define the
             geometry's shape and size.
     """
-    
-    TYPES = ['box', 'cylinder', 'sphere', 'capsule', 'mesh']
+
+    TYPES = ["box", "cylinder", "sphere", "capsule", "mesh"]
 
     def __init__(
         self,
         offset: Optional[object] = None,
         geom_type: Optional[str] = None,
-        geom_param: Optional[Union[Tuple, str]] = None
+        geom_param: Optional[Union[Tuple, str]] = None,
     ):
         """Initializes a visual geometry.
-        
+
         Args:
             offset (Optional[object], optional): A Transform3d object representing
                 the offset from the link frame. Defaults to None.
@@ -42,19 +42,21 @@ class Visual:
                 - 'sphere': radius
                 - 'mesh': (filename, scale_tuple)
                 Defaults to None.
-        
+
         Raises:
             ValueError: If `geom_type` is not one of the supported types.
         """
         self.offset = offset
         self.geom_type = geom_type
         self.geom_param = geom_param
-        
+
         if geom_type is not None and geom_type not in self.TYPES:
             raise ValueError(f"Invalid geometry type '{geom_type}'. Must be one of {self.TYPES}")
 
     def __repr__(self) -> str:
         """Returns a concise string representation of the Visual."""
-        return (f"Visual(offset={self.offset}, "
-                f"geom_type='{self.geom_type}', "
-                f"geom_param={self.geom_param})")
+        return (
+            f"Visual(offset={self.offset}, "
+            f"geom_type='{self.geom_type}', "
+            f"geom_param={self.geom_param})"
+        )

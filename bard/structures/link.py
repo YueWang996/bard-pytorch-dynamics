@@ -26,10 +26,10 @@ class Link:
         name: Optional[str] = None,
         offset: Optional[object] = None,
         inertial: Optional[Tuple[object, float, torch.Tensor]] = None,
-        visuals: Sequence['Visual'] = ()
+        visuals: Sequence["Visual"] = (),
     ):
         """Initializes a robot link.
-        
+
         Args:
             name (Optional[str], optional): The name/identifier of the link.
                 Defaults to "unnamed_link".
@@ -47,10 +47,8 @@ class Link:
         self.visuals = list(visuals)
 
     def to(
-        self,
-        dtype: Optional[torch.dtype] = None,
-        device: Optional[torch.device] = None
-    ) -> 'Link':
+        self, dtype: Optional[torch.dtype] = None, device: Optional[torch.device] = None
+    ) -> "Link":
         """Moves all tensor data in the link to a specified device/dtype.
 
         Args:
@@ -62,7 +60,7 @@ class Link:
         """
         if self.offset is not None:
             self.offset = self.offset.to(dtype=dtype, device=device)
-        
+
         if self.inertial is not None:
             com_offset, mass, inertia = self.inertial
             if com_offset is not None:
@@ -70,14 +68,16 @@ class Link:
             if isinstance(inertia, torch.Tensor):
                 inertia = inertia.to(dtype=dtype, device=device)
             self.inertial = (com_offset, mass, inertia)
-        
+
         return self
 
     def __repr__(self) -> str:
         """Returns a concise string representation of the Link."""
         has_inertia = self.inertial is not None
         num_visuals = len(self.visuals)
-        return (f"Link(name='{self.name}', "
-                f"offset={self.offset}, "
-                f"has_inertial={has_inertia}, "
-                f"num_visuals={num_visuals})")
+        return (
+            f"Link(name='{self.name}', "
+            f"offset={self.offset}, "
+            f"has_inertial={has_inertia}, "
+            f"num_visuals={num_visuals})"
+        )

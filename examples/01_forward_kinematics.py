@@ -2,6 +2,7 @@ import torch
 from bard.parsers.urdf import build_chain_from_urdf
 from bard.core.kinematics import ForwardKinematics
 
+
 def main():
     """
     A simple example of computing forward kinematics for a fixed-base robot.
@@ -45,10 +46,11 @@ def main():
     # 5. Extract and print the 4x4 homogeneous transformation matrix
     pose_matrix = transforms_batch[0]  # Get the first (and only) matrix from the batch
     position = pose_matrix[:3, 3]
-    
+
     print("\nEnd-effector pose matrix at q = [pi/2, pi/2]:")
     print(pose_matrix.numpy())
     print(f"\nEnd-effector XYZ position: {position.numpy()}")
+
 
 if __name__ == "__main__":
     main()

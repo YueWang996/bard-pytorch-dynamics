@@ -45,7 +45,9 @@ def quaternion_close(q1: torch.Tensor, q2: torch.Tensor, eps: float = 1e-4):
     return torch.all(dist < eps)
 
 
-def quaternion_slerp(q1: torch.Tensor, q2: torch.Tensor, t: Union[float, torch.tensor]) -> torch.Tensor:
+def quaternion_slerp(
+    q1: torch.Tensor, q2: torch.Tensor, t: Union[float, torch.tensor]
+) -> torch.Tensor:
     """
     Spherical linear interpolation between two quaternions.
     Args:
@@ -78,8 +80,8 @@ def quaternion_slerp(q1: torch.Tensor, q2: torch.Tensor, t: Union[float, torch.t
 
 
 def acos_linear_extrapolation(
-        x: torch.Tensor,
-        bound: Union[float, Tuple[float, float]] = 1.0 - 1e-4,
+    x: torch.Tensor,
+    bound: Union[float, Tuple[float, float]] = 1.0 - 1e-4,
 ) -> torch.Tensor:
     """
     Implements `arccos(x)` which is linearly extrapolated outside `x`'s original
