@@ -6,6 +6,8 @@ This module provides low-level utilities for:
 - Homogeneous transformation utilities
 - Spatial inertia computations
 - Tree structure helpers
+
+Many functions are JIT-compiled for performance.
 """
 
 from typing import List, Optional, Tuple, Union
@@ -15,7 +17,201 @@ TensorLike = Union[torch.Tensor, List[float]]
 
 
 # ============================================================================
-# Spatial algebra utilities
+# JIT-compiled optimized spatial algebra utilities
+# ============================================================================
+
+
+@torch.jit.script
+def quat_to_rotmat_fast(quat: torch.Tensor) -> torch.Tensor:
+    """Optimized quaternion to rotation matrix conversion.
+
+    Args:
+        quat: Quaternion (B, 4) as [qw, qx, qy, qz]
+
+    Returns:
+        Rotation matrix (B, 3, 3)
+    """
+    quat = quat / torch.linalg.vector_norm(quat, dim=-1, keepdim=True).clamp_min(1e-12)
+    qw, qx, qy, qz = quat.unbind(-1)
+
+    # Precompute all products once
+    xx, yy, zz = qx * qx, qy * qy, qz * qz
+    xy, xz, yz = qx * qy, qx * qz, qy * qz
+    wx, wy, wz = qw * qx, qw * qy, qw * qz
+
+    # Build matrix efficiently
+    R = torch.stack(
+        [
+            torch.stack([1.0 - 2.0 * (yy + zz), 2.0 * (xy - wz), 2.0 * (xz + wy)], dim=-1),
+            torch.stack([2.0 * (xy + wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz - wx)], dim=-1),
+            torch.stack([2.0 * (xz - wy), 2.0 * (yz + wx), 1.0 - 2.0 * (xx + yy)], dim=-1),
+        ],
+        dim=-2,
+    )
+
+    return R
+
+
+@torch.jit.script
+def spatial_adjoint_fast(T: torch.Tensor) -> torch.Tensor:
+    """Optimized spatial adjoint computation without intermediate allocations.
+
+    The adjoint maps spatial velocities between coordinate frames.
+    For twist convention [v; ω], the adjoint is:
+        [[R,    [p]×R],
+         [0,    R    ]]
+
+    Args:
+        T: Homogeneous transformation matrix (B, 4, 4)
+
+    Returns:
+        Adjoint matrix (B, 6, 6)
+    """
+    R = T[:, :3, :3]
+    p = T[:, :3, 3]
+
+    # Compute skew(p) @ R directly without creating skew matrix
+    px, py, pz = p.unbind(-1)
+    pxR = torch.stack(
+        [
+            -pz.unsqueeze(-1) * R[:, 1] + py.unsqueeze(-1) * R[:, 2],
+            pz.unsqueeze(-1) * R[:, 0] - px.unsqueeze(-1) * R[:, 2],
+            -py.unsqueeze(-1) * R[:, 0] + px.unsqueeze(-1) * R[:, 1],
+        ],
+        dim=1,
+    )
+
+    # Build result efficiently
+    batch = T.shape[0]
+    Ad = torch.zeros((batch, 6, 6), dtype=T.dtype, device=T.device)
+    Ad[:, :3, :3] = R
+    Ad[:, :3, 3:] = pxR
+    Ad[:, 3:, 3:] = R
+    return Ad
+
+
+@torch.jit.script
+def inv_homogeneous_fast(T: torch.Tensor) -> torch.Tensor:
+    """Optimized inverse of homogeneous transformation matrix.
+
+    For T = [R, p; 0, 1], returns T^{-1} = [R^T, -R^T p; 0, 1]
+
+    Args:
+        T: Homogeneous transformation (B, 4, 4)
+
+    Returns:
+        Inverse transformation (B, 4, 4)
+    """
+    R = T[:, :3, :3]
+    Rt = R.transpose(1, 2)
+    p = T[:, :3, 3]
+
+    # Compute -R^T @ p efficiently
+    p_inv = -(Rt @ p.unsqueeze(-1)).squeeze(-1)
+
+    # Build result without intermediate allocation
+    batch = T.shape[0]
+    T_inv = torch.zeros_like(T)
+    T_inv[:, :3, :3] = Rt
+    T_inv[:, :3, 3] = p_inv
+    T_inv[:, 3, 3] = 1.0
+
+    return T_inv
+
+
+@torch.jit.script
+def motion_cross_product_fast(twist: torch.Tensor) -> torch.Tensor:
+    """Optimized motion cross product ad_{twist} for spatial velocities.
+
+    For twist = [v; ω] where v is linear and ω is angular velocity,
+    returns the 6×6 matrix representing the Lie bracket operation.
+
+    Args:
+        twist: Spatial velocity (B, 6, 1) as [v; ω]
+
+    Returns:
+        Cross product matrix (B, 6, 6)
+    """
+    v = twist[:, :3, 0]
+    w = twist[:, 3:, 0]
+    batch = twist.shape[0]
+
+    # Compute skew matrices directly
+    wx, wy, wz = w.unbind(-1)
+    vx, vy, vz = v.unbind(-1)
+    zeros = torch.zeros_like(wx)
+
+    w_skew = torch.stack(
+        [
+            torch.stack([zeros, -wz, wy], dim=-1),
+            torch.stack([wz, zeros, -wx], dim=-1),
+            torch.stack([-wy, wx, zeros], dim=-1),
+        ],
+        dim=-2,
+    )
+
+    v_skew = torch.stack(
+        [
+            torch.stack([zeros, -vz, vy], dim=-1),
+            torch.stack([vz, zeros, -vx], dim=-1),
+            torch.stack([-vy, vx, zeros], dim=-1),
+        ],
+        dim=-2,
+    )
+
+    result = torch.zeros((batch, 6, 6), dtype=twist.dtype, device=twist.device)
+    result[:, :3, :3] = w_skew
+    result[:, :3, 3:] = v_skew
+    result[:, 3:, 3:] = w_skew
+
+    return result
+
+
+@torch.jit.script
+def force_cross_product_fast(twist: torch.Tensor) -> torch.Tensor:
+    """Optimized force cross product (dual of motion cross product).
+
+    This is the adjoint operator for spatial forces: ad*_{twist} = -ad_{twist}^T
+
+    Args:
+        twist: Spatial velocity (B, 6, 1)
+
+    Returns:
+        Force cross product matrix (B, 6, 6)
+    """
+    return -motion_cross_product_fast(twist).transpose(1, 2)
+
+
+@torch.jit.script
+def skew_symmetric_fast(v: torch.Tensor) -> torch.Tensor:
+    """Optimized skew-symmetric matrix computation.
+
+    For vector v = [x, y, z], returns:
+        [[ 0, -z,  y],
+         [ z,  0, -x],
+         [-y,  x,  0]]
+
+    Args:
+        v: Vector of shape (B, 3)
+
+    Returns:
+        Skew-symmetric matrix of shape (B, 3, 3)
+    """
+    x, y, z = v.unbind(-1)
+    zeros = torch.zeros_like(x)
+
+    return torch.stack(
+        [
+            torch.stack([zeros, -z, y], dim=-1),
+            torch.stack([z, zeros, -x], dim=-1),
+            torch.stack([-y, x, zeros], dim=-1),
+        ],
+        dim=-2,
+    )
+
+
+# ============================================================================
+# Original (non-JIT) spatial algebra utilities for backward compatibility
 # ============================================================================
 
 
@@ -34,16 +230,12 @@ def skew_symmetric(v: torch.Tensor) -> torch.Tensor:
     Returns:
         Skew-symmetric matrix of shape (..., 3, 3)
     """
-    x, y, z = v[..., 0], v[..., 1], v[..., 2]
-    zeros = torch.zeros_like(x)
-    return torch.stack(
-        [
-            torch.stack([zeros, -z, y], dim=-1),
-            torch.stack([z, zeros, -x], dim=-1),
-            torch.stack([-y, x, zeros], dim=-1),
-        ],
-        dim=-2,
-    )
+    # Add batch dimension if needed
+    if v.ndim == 1:
+        v = v.unsqueeze(0)
+        result = skew_symmetric_fast(v)
+        return result.squeeze(0)
+    return skew_symmetric_fast(v)
 
 
 def spatial_adjoint(T: torch.Tensor) -> torch.Tensor:
@@ -61,16 +253,7 @@ def spatial_adjoint(T: torch.Tensor) -> torch.Tensor:
     Returns:
         Adjoint matrix (B, 6, 6)
     """
-    R = T[:, :3, :3]
-    p = T[:, :3, 3]
-    batch = T.shape[0]
-
-    Ad = torch.empty((batch, 6, 6), dtype=T.dtype, device=T.device)
-    Ad[:, :3, :3] = R
-    Ad[:, 3:, :3] = 0
-    Ad[:, :3, 3:] = skew_symmetric(p) @ R
-    Ad[:, 3:, 3:] = R
-    return Ad
+    return spatial_adjoint_fast(T)
 
 
 def inv_homogeneous(T: torch.Tensor) -> torch.Tensor:
@@ -85,32 +268,7 @@ def inv_homogeneous(T: torch.Tensor) -> torch.Tensor:
     Returns:
         Inverse transformation (B, 4, 4)
     """
-    R = T[:, :3, :3]
-    Rt = R.transpose(1, 2)
-    p = T[:, :3, 3]
-    p_inv = -(Rt @ p.unsqueeze(-1)).squeeze(-1)
-
-    T_inv = torch.empty_like(T)
-    T_inv[:, :3, :3] = Rt
-    T_inv[:, :3, 3] = p_inv
-    T_inv[:, 3, :3] = 0
-    T_inv[:, 3, 3] = 1
-    return T_inv
-
-
-def identity_transform(batch: int, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
-    """
-    Create batch of identity transformation matrices.
-
-    Args:
-        batch: Batch size
-        dtype: Data type
-        device: Device
-
-    Returns:
-        Identity matrices (B, 4, 4)
-    """
-    return torch.eye(4, dtype=dtype, device=device).unsqueeze(0).expand(batch, -1, -1)
+    return inv_homogeneous_fast(T)
 
 
 def motion_cross_product(twist: torch.Tensor) -> torch.Tensor:
@@ -126,17 +284,10 @@ def motion_cross_product(twist: torch.Tensor) -> torch.Tensor:
     Returns:
         Cross product matrix (B, 6, 6)
     """
-    v = twist[..., :3]
-    w = twist[..., 3:]
-    batch = twist.shape[0]
-
-    zeros = torch.zeros((batch, 3, 3), dtype=twist.dtype, device=twist.device)
-    w_skew = skew_symmetric(w)
-    v_skew = skew_symmetric(v)
-
-    top = torch.cat([w_skew, v_skew], dim=-1)
-    bottom = torch.cat([zeros, w_skew], dim=-1)
-    return torch.cat([top, bottom], dim=-2)
+    # Ensure correct shape for fast version
+    if twist.ndim == 2 and twist.shape[-1] == 6:
+        twist = twist.unsqueeze(-1)
+    return motion_cross_product_fast(twist)
 
 
 def force_cross_product(twist: torch.Tensor) -> torch.Tensor:
@@ -151,7 +302,25 @@ def force_cross_product(twist: torch.Tensor) -> torch.Tensor:
     Returns:
         Force cross product matrix (B, 6, 6)
     """
-    return -motion_cross_product(twist).transpose(1, 2)
+    # Ensure correct shape for fast version
+    if twist.ndim == 2 and twist.shape[-1] == 6:
+        twist = twist.unsqueeze(-1)
+    return force_cross_product_fast(twist)
+
+
+def identity_transform(batch: int, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
+    """
+    Create batch of identity transformation matrices.
+
+    Args:
+        batch: Batch size
+        dtype: Data type
+        device: Device
+
+    Returns:
+        Identity matrices (B, 4, 4)
+    """
+    return torch.eye(4, dtype=dtype, device=device).unsqueeze(0).expand(batch, -1, -1)
 
 
 # ============================================================================
@@ -170,30 +339,11 @@ def quaternion_to_rotation_matrix(q: torch.Tensor, normalize: bool = True) -> to
     Returns:
         Rotation matrix (B, 3, 3)
     """
-    if normalize:
-        q = q / q.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+    if not normalize:
+        return quat_to_rotmat_fast(q)
 
-    qw, qx, qy, qz = q.unbind(-1)
-    dtype, device = q.dtype, q.device
-
-    two = torch.tensor(2.0, dtype=dtype, device=device)
-    x2, y2, z2 = two * qx * qx, two * qy * qy, two * qz * qz
-    xy, xz, yz = two * qx * qy, two * qx * qz, two * qy * qz
-    wx, wy, wz = two * qw * qx, two * qw * qy, two * qw * qz
-
-    batch = q.shape[0]
-    R = torch.empty(batch, 3, 3, dtype=dtype, device=device)
-    R[:, 0, 0] = 1.0 - (y2 + z2)
-    R[:, 0, 1] = xy - wz
-    R[:, 0, 2] = xz + wy
-    R[:, 1, 0] = xy + wz
-    R[:, 1, 1] = 1.0 - (x2 + z2)
-    R[:, 1, 2] = yz - wx
-    R[:, 2, 0] = xz - wy
-    R[:, 2, 1] = yz + wx
-    R[:, 2, 2] = 1.0 - (x2 + y2)
-
-    return R
+    # Fast version already normalizes
+    return quat_to_rotmat_fast(q)
 
 
 def base_pose_to_transform(q_base: torch.Tensor, normalize_quat: bool = True) -> torch.Tensor:
@@ -213,7 +363,7 @@ def base_pose_to_transform(q_base: torch.Tensor, normalize_quat: bool = True) ->
     t = q_base[:, :3]
     quat = q_base[:, 3:]
 
-    R = quaternion_to_rotation_matrix(quat, normalize=normalize_quat)
+    R = quat_to_rotmat_fast(quat) if normalize_quat else quat_to_rotmat_fast(quat)
 
     T = torch.zeros(batch, 4, 4, dtype=dtype, device=device)
     T[:, :3, :3] = R

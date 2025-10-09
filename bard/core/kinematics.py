@@ -1,12 +1,11 @@
 """
-Class-based kinematic computations with pre-allocated memory.
+Optimized class-based kinematic computations with pre-allocated memory.
 
 This module provides classes for core kinematic calculations:
 - ``ForwardKinematics``: Computes the world-frame pose of any link.
 - ``SpatialAcceleration``: Computes the spatial acceleration of any link.
 
-Both classes are designed for high performance by pre-allocating memory buffers,
-making them suitable for use in computationally intensive loops, such as in
+Optimized with JIT-compiled utility functions for better performance, making them suitable for use in computationally intensive loops, such as in
 reinforcement learning or trajectory optimization.
 """
 
@@ -23,9 +22,10 @@ from bard.transforms import (
 from .utils import (
     identity_transform,
     as_batched_transform,
-    inv_homogeneous,
-    motion_cross_product,
-    spatial_adjoint,
+    inv_homogeneous_fast,
+    motion_cross_product_fast,
+    spatial_adjoint_fast,
+    quat_to_rotmat_fast,
 )
 
 
@@ -85,8 +85,31 @@ class ForwardKinematics:
         self.n_joints = chain.n_joints
         self.is_floating_base = chain.has_floating_base
 
-        # Pre-compute normalized axes (same as jacobian_cached.py)
+        # Pre-compute normalized axes
         self.axes_norm = chain.axes / chain.axes.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+
+        # Pre-stack joint and link offsets for better memory access
+        joint_offsets_list = []
+        link_offsets_list = []
+        for node_idx in range(self.n_nodes):
+            j_off = chain.joint_offsets[node_idx]
+            l_off = chain.link_offsets[node_idx]
+
+            if j_off is not None:
+                j_off = j_off.reshape(4, 4).to(dtype=self.dtype, device=self.device)
+            else:
+                j_off = torch.eye(4, dtype=self.dtype, device=self.device)
+
+            if l_off is not None:
+                l_off = l_off.reshape(4, 4).to(dtype=self.dtype, device=self.device)
+            else:
+                l_off = torch.eye(4, dtype=self.dtype, device=self.device)
+
+            joint_offsets_list.append(j_off)
+            link_offsets_list.append(l_off)
+
+        self.joint_offset_stack = torch.stack(joint_offsets_list, dim=0)  # (n_nodes, 4, 4)
+        self.link_offset_stack = torch.stack(link_offsets_list, dim=0)  # (n_nodes, 4, 4)
 
         # Conditional compilation setup
         self._compile_enabled = compile_enabled
@@ -125,6 +148,8 @@ class ForwardKinematics:
             self.device = device
 
         self.axes_norm = self.axes_norm.to(dtype=self.dtype, device=self.device)
+        self.joint_offset_stack = self.joint_offset_stack.to(dtype=self.dtype, device=self.device)
+        self.link_offset_stack = self.link_offset_stack.to(dtype=self.dtype, device=self.device)
 
         self._setup_calc_callable()
 
@@ -190,28 +215,11 @@ class ForwardKinematics:
 
         I44 = identity_transform(batch_size, self.dtype, self.device)
 
-        # Initialize world transform with base pose (if floating)
+        # Initialize world transform with base pose (if floating) using optimized quat conversion
         if self.is_floating_base and q_base is not None:
             t = q_base[:, :3]
-            qwqxqyqz = q_base[:, 3:]
-            qwqxqyqz = qwqxqyqz / qwqxqyqz.norm(dim=-1, keepdim=True).clamp_min(1e-12)
-            qw, qx, qy, qz = qwqxqyqz.unbind(-1)
-
-            two = torch.tensor(2.0, dtype=self.dtype, device=self.device)
-            x2, y2, z2 = two * qx * qx, two * qy * qy, two * qz * qz
-            xy, xz, yz = two * qx * qy, two * qx * qz, two * qy * qz
-            wz, wy, wx = two * qw * qz, two * qw * qy, two * qw * qx
-
-            R_base_to_world = torch.empty(batch_size, 3, 3, dtype=self.dtype, device=self.device)
-            R_base_to_world[:, 0, 0] = 1.0 - (y2 + z2)
-            R_base_to_world[:, 0, 1] = xy - wz
-            R_base_to_world[:, 0, 2] = xz + wy
-            R_base_to_world[:, 1, 0] = xy + wz
-            R_base_to_world[:, 1, 1] = 1.0 - (x2 + z2)
-            R_base_to_world[:, 1, 2] = yz - wx
-            R_base_to_world[:, 2, 0] = xz - wy
-            R_base_to_world[:, 2, 1] = yz + wx
-            R_base_to_world[:, 2, 2] = 1.0 - (x2 + y2)
+            quat = q_base[:, 3:]
+            R_base_to_world = quat_to_rotmat_fast(quat)
 
             T_world_to_current = torch.zeros(batch_size, 4, 4, dtype=self.dtype, device=self.device)
             T_world_to_current[:, :3, :3] = R_base_to_world
@@ -225,8 +233,9 @@ class ForwardKinematics:
             joint_idx = self.chain.joint_indices_list[node_idx]
             joint_type_idx = self.chain.joint_type_indices_list[node_idx]
 
-            T_joint_offset = as_batched_transform(
-                self.chain.joint_offsets[node_idx], batch_size, self.dtype, self.device
+            # Use pre-stacked offsets
+            T_joint_offset = (
+                self.joint_offset_stack[node_idx].unsqueeze(0).expand(batch_size, -1, -1)
             )
 
             # Select motion transform based on joint type
@@ -240,9 +249,7 @@ class ForwardKinematics:
             else:  # fixed
                 T_motion = I44
 
-            T_link_offset = as_batched_transform(
-                self.chain.link_offsets[node_idx], batch_size, self.dtype, self.device
-            )
+            T_link_offset = self.link_offset_stack[node_idx].unsqueeze(0).expand(batch_size, -1, -1)
 
             # Accumulate transform
             T_world_to_current = T_world_to_current @ T_joint_offset @ T_motion @ T_link_offset
@@ -306,21 +313,50 @@ class SpatialAcceleration:
         self.n_joints = chain.n_joints
         self.is_floating_base = chain.has_floating_base
 
-        # Pre-allocate all buffers
+        # Pre-allocate all buffers with optimized memory layout (batch, n_nodes, ...)
         self.Xup = torch.zeros(
-            self.n_nodes, max_batch_size, 6, 6, dtype=self.dtype, device=self.device
+            max_batch_size, self.n_nodes, 6, 6, dtype=self.dtype, device=self.device
         )
-        self.S = torch.zeros(self.n_nodes, max_batch_size, 6, dtype=self.dtype, device=self.device)
-        self.v = torch.zeros(self.n_nodes, max_batch_size, 6, dtype=self.dtype, device=self.device)
-        self.a = torch.zeros(self.n_nodes, max_batch_size, 6, dtype=self.dtype, device=self.device)
+        self.S = torch.zeros(
+            max_batch_size, self.n_nodes, 6, 1, dtype=self.dtype, device=self.device
+        )
+        self.v = torch.zeros(
+            max_batch_size, self.n_nodes, 6, 1, dtype=self.dtype, device=self.device
+        )
+        self.a = torch.zeros(
+            max_batch_size, self.n_nodes, 6, 1, dtype=self.dtype, device=self.device
+        )
 
-        # Pre-allocate transform storage (avoid Python list mutation in compiled code)
+        # Pre-allocate transform storage
         self.T_world_to_node = torch.zeros(
-            self.n_nodes, max_batch_size, 4, 4, dtype=self.dtype, device=self.device
+            max_batch_size, self.n_nodes, 4, 4, dtype=self.dtype, device=self.device
         )
 
-        # Pre-compute normalized axes (same as jacobian_cached.py)
+        # Pre-compute normalized axes
         self.axes_norm = chain.axes / chain.axes.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+
+        # Pre-stack joint and link offsets
+        joint_offsets_list = []
+        link_offsets_list = []
+        for node_idx in range(self.n_nodes):
+            j_off = chain.joint_offsets[node_idx]
+            l_off = chain.link_offsets[node_idx]
+
+            if j_off is not None:
+                j_off = j_off.reshape(4, 4).to(dtype=self.dtype, device=self.device)
+            else:
+                j_off = torch.eye(4, dtype=self.dtype, device=self.device)
+
+            if l_off is not None:
+                l_off = l_off.reshape(4, 4).to(dtype=self.dtype, device=self.device)
+            else:
+                l_off = torch.eye(4, dtype=self.dtype, device=self.device)
+
+            joint_offsets_list.append(j_off)
+            link_offsets_list.append(l_off)
+
+        self.joint_offset_stack = torch.stack(joint_offsets_list, dim=0)  # (n_nodes, 4, 4)
+        self.link_offset_stack = torch.stack(link_offsets_list, dim=0)  # (n_nodes, 4, 4)
 
         # Conditional compilation setup
         self._compile_enabled = compile_enabled
@@ -364,6 +400,8 @@ class SpatialAcceleration:
         self.a = self.a.to(dtype=self.dtype, device=self.device)
         self.T_world_to_node = self.T_world_to_node.to(dtype=self.dtype, device=self.device)
         self.axes_norm = self.axes_norm.to(dtype=self.dtype, device=self.device)
+        self.joint_offset_stack = self.joint_offset_stack.to(dtype=self.dtype, device=self.device)
+        self.link_offset_stack = self.link_offset_stack.to(dtype=self.dtype, device=self.device)
 
         self._setup_calc_callable()
 
@@ -424,11 +462,11 @@ class SpatialAcceleration:
         batch_size = q.shape[0]
 
         # Get sliced views of pre-allocated buffers
-        Xup = self.Xup[:, :batch_size, :, :]
-        S = self.S[:, :batch_size, :]
-        v = self.v[:, :batch_size, :]
-        a = self.a[:, :batch_size, :]
-        T_world_to_node = self.T_world_to_node[:, :batch_size, :, :]
+        Xup = self.Xup[:batch_size]
+        S = self.S[:batch_size]
+        v = self.v[:batch_size]
+        a = self.a[:batch_size]
+        T_world_to_node = self.T_world_to_node[:batch_size]
 
         # Zero out buffers
         S.zero_()
@@ -450,7 +488,7 @@ class SpatialAcceleration:
             a_joints = qdd
 
         # World spatial acceleration (gravity disabled for pure kinematic acceleration)
-        a_world0 = torch.zeros((batch_size, 6), dtype=self.dtype, device=self.device)
+        a_world0 = torch.zeros((batch_size, 6, 1), dtype=self.dtype, device=self.device)
 
         # Pre-compute joint transforms
         axes_expanded = self.axes_norm.unsqueeze(0).expand(batch_size, -1, -1)
@@ -459,28 +497,11 @@ class SpatialAcceleration:
 
         I44 = identity_transform(batch_size, self.dtype, self.device)
 
-        # Build base transform if floating
+        # Build base transform if floating using optimized quat conversion
         if self.is_floating_base and q_base is not None:
             t = q_base[:, :3]
-            qwqxqyqz = q_base[:, 3:]
-            qwqxqyqz = qwqxqyqz / qwqxqyqz.norm(dim=-1, keepdim=True).clamp_min(1e-12)
-            qw, qx, qy, qz = qwqxqyqz.unbind(-1)
-
-            two = torch.tensor(2.0, dtype=self.dtype, device=self.device)
-            x2, y2, z2 = two * qx * qx, two * qy * qy, two * qz * qz
-            xy, xz, yz = two * qx * qy, two * qx * qz, two * qy * qz
-            wz, wy, wx = two * qw * qz, two * qw * qy, two * qw * qx
-
-            R = torch.empty(batch_size, 3, 3, dtype=self.dtype, device=self.device)
-            R[:, 0, 0] = 1.0 - (y2 + z2)
-            R[:, 0, 1] = xy - wz
-            R[:, 0, 2] = xz + wy
-            R[:, 1, 0] = xy + wz
-            R[:, 1, 1] = 1.0 - (x2 + z2)
-            R[:, 1, 2] = yz - wx
-            R[:, 2, 0] = xz - wy
-            R[:, 2, 1] = yz + wx
-            R[:, 2, 2] = 1.0 - (x2 + y2)
+            quat = q_base[:, 3:]
+            R = quat_to_rotmat_fast(quat)
 
             T_world_to_base = torch.zeros(batch_size, 4, 4, dtype=self.dtype, device=self.device)
             T_world_to_base[:, :3, :3] = R
@@ -495,12 +516,11 @@ class SpatialAcceleration:
             joint_type_idx = self.chain.joint_type_indices_list[node_idx]
             parent_idx = self.chain.parent_list[node_idx]
 
-            T_joint_offset = as_batched_transform(
-                self.chain.joint_offsets[node_idx], batch_size, self.dtype, self.device
+            # Use pre-stacked offsets
+            T_joint_offset = (
+                self.joint_offset_stack[node_idx].unsqueeze(0).expand(batch_size, -1, -1)
             )
-            T_link_offset = as_batched_transform(
-                self.chain.link_offsets[node_idx], batch_size, self.dtype, self.device
-            )
+            T_link_offset = self.link_offset_stack[node_idx].unsqueeze(0).expand(batch_size, -1, -1)
 
             # Select motion transform
             is_revolute = joint_type_idx == Joint.TYPES.index("revolute")
@@ -513,61 +533,57 @@ class SpatialAcceleration:
             else:  # fixed
                 T_motion = I44
 
-            # Parent -> child transform
+            # Parent -> child transform using optimized functions
             T_parent_to_child = T_joint_offset @ T_motion @ T_link_offset
-            Xup_i = spatial_adjoint(inv_homogeneous(T_parent_to_child))
-            Xup[node_idx] = Xup_i
+            Xup_i = spatial_adjoint_fast(inv_homogeneous_fast(T_parent_to_child))
+            Xup[:, node_idx] = Xup_i
 
             # Joint subspace
             is_actuated = is_revolute or is_prismatic
             if is_actuated:
                 axis_local = self.axes_norm[joint_idx].expand(batch_size, -1)
-                twist_joint = torch.zeros((batch_size, 6), dtype=self.dtype, device=self.device)
+                twist_joint = torch.zeros((batch_size, 6, 1), dtype=self.dtype, device=self.device)
                 if is_revolute:
-                    twist_joint[:, 3:] = axis_local
+                    twist_joint[:, 3:, 0] = axis_local
                 else:  # prismatic
-                    twist_joint[:, :3] = axis_local
-                S[node_idx] = (spatial_adjoint(T_link_offset) @ twist_joint.unsqueeze(-1)).squeeze(
-                    -1
-                )
-                v_joint = v_joints[:, joint_idx].unsqueeze(-1)
-                a_joint = a_joints[:, joint_idx].unsqueeze(-1)
+                    twist_joint[:, :3, 0] = axis_local
+                S[:, node_idx] = spatial_adjoint_fast(T_link_offset) @ twist_joint
+                v_joint = v_joints[:, joint_idx].view(batch_size, 1, 1)
+                a_joint = a_joints[:, joint_idx].view(batch_size, 1, 1)
             else:
-                v_joint = torch.zeros((batch_size, 1), dtype=self.dtype, device=self.device)
-                a_joint = torch.zeros((batch_size, 1), dtype=self.dtype, device=self.device)
+                v_joint = torch.zeros((batch_size, 1, 1), dtype=self.dtype, device=self.device)
+                a_joint = torch.zeros((batch_size, 1, 1), dtype=self.dtype, device=self.device)
 
             # Parent state
             if parent_idx == -1:  # Root node
                 if self.is_floating_base and v_base is not None:
-                    v_parent = v_base
-                    a_parent = a_base + a_world0
+                    v_parent = v_base.unsqueeze(-1)
+                    a_parent = a_base.unsqueeze(-1) + a_world0
                 else:
-                    v_parent = torch.zeros((batch_size, 6), dtype=self.dtype, device=self.device)
+                    v_parent = torch.zeros((batch_size, 6, 1), dtype=self.dtype, device=self.device)
                     a_parent = a_world0
                 T_world_to_parent = T_world_to_base
             else:
-                v_parent = v[parent_idx]
-                a_parent = a[parent_idx]
-                T_world_to_parent = T_world_to_node[parent_idx]
+                v_parent = v[:, parent_idx]
+                a_parent = a[:, parent_idx]
+                T_world_to_parent = T_world_to_node[:, parent_idx]
 
-            # RNEA propagation
-            vJ = S[node_idx] * v_joint
-            v[node_idx] = (Xup_i @ v_parent.unsqueeze(-1)).squeeze(-1) + vJ
+            # RNEA propagation using optimized motion cross product
+            vJ = S[:, node_idx] * v_joint
+            v[:, node_idx] = Xup_i @ v_parent + vJ
 
-            coriolis = (motion_cross_product(v[node_idx]) @ vJ.unsqueeze(-1)).squeeze(-1)
-            a[node_idx] = (
-                (Xup_i @ a_parent.unsqueeze(-1)).squeeze(-1) + S[node_idx] * a_joint + coriolis
-            )
+            coriolis = motion_cross_product_fast(v[:, node_idx]) @ vJ
+            a[:, node_idx] = Xup_i @ a_parent + S[:, node_idx] * a_joint + coriolis
 
             # Accumulate world pose
-            T_world_to_node[node_idx] = T_world_to_parent @ T_parent_to_child
+            T_world_to_node[:, node_idx] = T_world_to_parent @ T_parent_to_child
 
         # Extract acceleration at target frame
-        a_local = a[frame_id]
+        a_local = a[:, frame_id]
 
         if reference_frame == "world":
-            Ad_world_wrt_body = spatial_adjoint(T_world_to_node[frame_id])
-            a_world = (Ad_world_wrt_body @ a_local.unsqueeze(-1)).squeeze(-1)
-            return a_world
+            Ad_world_wrt_body = spatial_adjoint_fast(T_world_to_node[:, frame_id])
+            a_world = Ad_world_wrt_body @ a_local
+            return a_world.squeeze(-1)
         else:  # local
-            return a_local
+            return a_local.squeeze(-1)

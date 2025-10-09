@@ -5,12 +5,6 @@ This module implements the core dynamics algorithms for the ``bard`` library.
 It includes class-based, optimized implementations of the Recursive Newton-Euler
 Algorithm (RNEA) for inverse dynamics and the Composite Rigid Body Algorithm (CRBA)
 for calculating the mass matrix.
-
-A key design feature of these classes is the pre-allocation of all necessary
-memory buffers upon instantiation. This strategy minimizes or eliminates runtime
-memory allocation, making these classes highly efficient for use in performance-critical
-applications like reinforcement learning training loops where the same computations
-are performed repeatedly.
 """
 
 from typing import Any, Dict, Optional
@@ -25,10 +19,11 @@ from bard.transforms import (
 from .utils import (
     identity_transform,
     as_batched_transform,
-    inv_homogeneous,
-    spatial_adjoint,
-    motion_cross_product,
-    force_cross_product,
+    inv_homogeneous_fast,
+    spatial_adjoint_fast,
+    motion_cross_product_fast,
+    force_cross_product_fast,
+    quat_to_rotmat_fast,
 )
 
 
@@ -87,23 +82,79 @@ class RNEA:
         self.n_joints = chain.n_joints
         self.is_floating_base = chain.has_floating_base
 
-        # Pre-allocate all buffers
+        # Optimized memory layout: (batch, n_nodes, ...) for better cache locality
         self.Xup = torch.zeros(
-            self.n_nodes, max_batch_size, 6, 6, dtype=self.dtype, device=self.device
+            max_batch_size, self.n_nodes, 6, 6, dtype=self.dtype, device=self.device
         )
-        self.S = torch.zeros(self.n_nodes, max_batch_size, 6, dtype=self.dtype, device=self.device)
-        self.v = torch.zeros(self.n_nodes, max_batch_size, 6, dtype=self.dtype, device=self.device)
-        self.a = torch.zeros(self.n_nodes, max_batch_size, 6, dtype=self.dtype, device=self.device)
-        self.f = torch.zeros(self.n_nodes, max_batch_size, 6, dtype=self.dtype, device=self.device)
+        self.S = torch.zeros(
+            max_batch_size, self.n_nodes, 6, 1, dtype=self.dtype, device=self.device
+        )
+        self.v = torch.zeros(
+            max_batch_size, self.n_nodes, 6, 1, dtype=self.dtype, device=self.device
+        )
+        self.a = torch.zeros(
+            max_batch_size, self.n_nodes, 6, 1, dtype=self.dtype, device=self.device
+        )
+        self.f = torch.zeros(
+            max_batch_size, self.n_nodes, 6, 1, dtype=self.dtype, device=self.device
+        )
 
         # Pre-compute static data
-        self.I_spatial = chain.spatial_inertias.unsqueeze(1)  # (n_nodes, 1, 6, 6)
+        self.I_spatial = chain.spatial_inertias  # (n_nodes, 6, 6)
         self.axes_norm = chain.axes / chain.axes.norm(dim=-1, keepdim=True).clamp_min(1e-12)
         self.gravity = torch.tensor([0.0, 0.0, -9.81], dtype=self.dtype, device=self.device)
+
+        # Convert chain metadata to tensors for GPU operations
+        self.topo_order_tensor = torch.tensor(
+            chain.topo_order, dtype=torch.long, device=self.device
+        )
+        self.joint_indices_tensor = torch.tensor(
+            chain.joint_indices_list, dtype=torch.long, device=self.device
+        )
+        self.joint_type_tensor = torch.tensor(
+            chain.joint_type_indices_list, dtype=torch.long, device=self.device
+        )
+        self.parent_tensor = torch.tensor(chain.parent_list, dtype=torch.long, device=self.device)
+
+        # Create tensor indicating which nodes are actuated
+        self.is_revolute = self.joint_type_tensor == Joint.TYPES.index("revolute")
+        self.is_prismatic = self.joint_type_tensor == Joint.TYPES.index("prismatic")
+        self.is_actuated = self.is_revolute | self.is_prismatic
+
+        # Pre-compute joint offset and link offset transforms as tensors
+        # Stack them for vectorized operations
+        joint_offsets_list = []
+        link_offsets_list = []
+        for node_idx in range(self.n_nodes):
+            j_off = chain.joint_offsets[node_idx]
+            l_off = chain.link_offsets[node_idx]
+
+            if j_off is not None:
+                j_off = j_off.reshape(4, 4).to(dtype=self.dtype, device=self.device)
+            else:
+                j_off = torch.eye(4, dtype=self.dtype, device=self.device)
+
+            if l_off is not None:
+                l_off = l_off.reshape(4, 4).to(dtype=self.dtype, device=self.device)
+            else:
+                l_off = torch.eye(4, dtype=self.dtype, device=self.device)
+
+            joint_offsets_list.append(j_off)
+            link_offsets_list.append(l_off)
+
+        # Stack into (n_nodes, 4, 4) tensors
+        self.joint_offset_stack = torch.stack(joint_offsets_list, dim=0)  # (n_nodes, 4, 4)
+        self.link_offset_stack = torch.stack(link_offsets_list, dim=0)  # (n_nodes, 4, 4)
 
         # Conditional compilation setup
         self._compile_enabled = compile_enabled
         self._compile_kwargs: Dict[str, Any] = dict(compile_kwargs) if compile_kwargs else {}
+
+        # Compile individual methods for better optimization
+        if compile_enabled:
+            self._compile_kwargs.setdefault("mode", "max-autotune")
+            self._compile_kwargs.setdefault("fullgraph", False)
+
         self._setup_calc_callable()
 
     def enable_compilation(self, enabled: bool = True, **compile_kwargs):
@@ -146,8 +197,18 @@ class RNEA:
         self.axes_norm = self.axes_norm.to(dtype=self.dtype, device=self.device)
         self.gravity = self.gravity.to(dtype=self.dtype, device=self.device)
 
-        self._setup_calc_callable()
+        self.topo_order_tensor = self.topo_order_tensor.to(device=self.device)
+        self.joint_indices_tensor = self.joint_indices_tensor.to(device=self.device)
+        self.joint_type_tensor = self.joint_type_tensor.to(device=self.device)
+        self.parent_tensor = self.parent_tensor.to(device=self.device)
+        self.is_revolute = self.is_revolute.to(device=self.device)
+        self.is_prismatic = self.is_prismatic.to(device=self.device)
+        self.is_actuated = self.is_actuated.to(device=self.device)
 
+        self.joint_offset_stack = self.joint_offset_stack.to(dtype=self.dtype, device=self.device)
+        self.link_offset_stack = self.link_offset_stack.to(dtype=self.dtype, device=self.device)
+
+        self._setup_calc_callable()
         return self
 
     def calc(
@@ -197,10 +258,13 @@ class RNEA:
         return self._calc_callable(q, qd, qdd, gravity)
 
     def _setup_calc_callable(self):
-        fn = self._calc_impl
         if self._compile_enabled:
-            fn = torch.compile(fn, **self._compile_kwargs)
-        self._calc_callable = fn
+            # Try to compile with fullgraph=True for maximum optimization
+            compile_kwargs = self._compile_kwargs.copy()
+            compile_kwargs.setdefault("fullgraph", False)  # Start with False, can try True
+            self._calc_callable = torch.compile(self._calc_impl, **compile_kwargs)
+        else:
+            self._calc_callable = self._calc_impl
 
     def _calc_impl(
         self,
@@ -213,17 +277,15 @@ class RNEA:
 
         if batch_size > self.max_batch_size:
             raise ValueError(
-                f"Batch size {batch_size} exceeds max_batch_size {self.max_batch_size}. "
-                f"Create a new RNEA instance with larger max_batch_size."
+                f"Batch size {batch_size} exceeds max_batch_size {self.max_batch_size}."
             )
 
         # Get sliced views of pre-allocated buffers
-        Xup = self.Xup[:, :batch_size, :, :]
-        S = self.S[:, :batch_size, :]
-        v = self.v[:, :batch_size, :]
-        a = self.a[:, :batch_size, :]
-        f = self.f[:, :batch_size, :]
-        I_spatial = self.I_spatial.expand(-1, batch_size, -1, -1)
+        Xup = self.Xup[:batch_size]
+        S = self.S[:batch_size]
+        v = self.v[:batch_size]
+        a = self.a[:batch_size]
+        f = self.f[:batch_size]
 
         # Zero out buffers
         S.zero_()
@@ -241,37 +303,54 @@ class RNEA:
 
         # Set up gravity
         g = self.gravity if gravity is None else gravity
-        a_gravity_world = torch.zeros((batch_size, 6), dtype=self.dtype, device=self.device)
-        a_gravity_world[:, :3] = -g.expand(batch_size, -1)
+        a_gravity_world = torch.zeros((batch_size, 6, 1), dtype=self.dtype, device=self.device)
+        a_gravity_world[:, :3, 0] = -g.expand(batch_size, -1)
 
-        I44 = identity_transform(batch_size, self.dtype, self.device)
+        # Pre-compute transforms ONLY for actuated joints (more memory efficient)
+        # Create mapping from joint_idx to its transform
+        joint_transforms_revolute = {}
+        joint_transforms_prismatic = {}
+
+        for node_idx in self.chain.topo_order:
+            j_idx = self.chain.joint_indices_list[node_idx]
+            j_type = self.chain.joint_type_indices_list[node_idx]
+
+            if j_idx >= 0:  # Only for actuated joints
+                if j_type == Joint.TYPES.index("revolute"):
+                    if j_idx not in joint_transforms_revolute:
+                        axis = self.axes_norm[j_idx].expand(batch_size, -1)
+                        joint_transforms_revolute[j_idx] = axis_and_angle_to_matrix_44(
+                            axis, q_joints[:, j_idx]
+                        )
+                elif j_type == Joint.TYPES.index("prismatic"):
+                    if j_idx not in joint_transforms_prismatic:
+                        axis = self.axes_norm[j_idx].expand(batch_size, -1)
+                        joint_transforms_prismatic[j_idx] = axis_and_d_to_pris_matrix(
+                            axis, q_joints[:, j_idx]
+                        )
 
         # Build base transform if floating
         if self.is_floating_base:
             t = q_base[:, :3]
-            qwqxqyqz = q_base[:, 3:]
-            qwqxqyqz = qwqxqyqz / qwqxqyqz.norm(dim=-1, keepdim=True).clamp_min(1e-12)
-            qw, qx, qy, qz = qwqxqyqz.unbind(-1)
-
-            two = torch.tensor(2.0, dtype=self.dtype, device=self.device)
-            x2, y2, z2 = two * qx * qx, two * qy * qy, two * qz * qz
-            xy, xz, yz = two * qx * qy, two * qx * qz, two * qy * qz
-            wz, wy, wx = two * qw * qz, two * qw * qy, two * qw * qx
-
-            R = torch.empty(batch_size, 3, 3, dtype=self.dtype, device=self.device)
-            R[:, 0, 0], R[:, 0, 1], R[:, 0, 2] = 1.0 - (y2 + z2), xy - wz, xz + wy
-            R[:, 1, 0], R[:, 1, 1], R[:, 1, 2] = xy + wz, 1.0 - (x2 + z2), yz - wx
-            R[:, 2, 0], R[:, 2, 1], R[:, 2, 2] = xz - wy, yz + wx, 1.0 - (x2 + y2)
+            quat = q_base[:, 3:]
+            R = quat_to_rotmat_fast(quat)
 
             T_world_to_base = torch.zeros(batch_size, 4, 4, dtype=self.dtype, device=self.device)
             T_world_to_base[:, :3, :3] = R
             T_world_to_base[:, :3, 3] = t
             T_world_to_base[:, 3, 3] = 1.0
 
-            Ad_base_world = spatial_adjoint(inv_homogeneous(T_world_to_base))
-            a_gravity_base = (Ad_base_world @ a_gravity_world.unsqueeze(-1)).squeeze(-1)
+            Ad_base_world = spatial_adjoint_fast(inv_homogeneous_fast(T_world_to_base))
+            a_gravity_base = Ad_base_world @ a_gravity_world
         else:
             a_gravity_base = a_gravity_world
+
+        # Cache for commonly used identity and offset transforms
+        I44 = (
+            torch.eye(4, dtype=self.dtype, device=self.device)
+            .unsqueeze(0)
+            .expand(batch_size, -1, -1)
+        )
 
         # ========================================================================
         # Forward pass: propagate velocities and accelerations
@@ -282,111 +361,122 @@ class RNEA:
             j_type = self.chain.joint_type_indices_list[node_idx]
             p_idx = self.chain.parent_list[node_idx]
 
-            T_joint_offset = as_batched_transform(
-                self.chain.joint_offsets[node_idx], batch_size, self.dtype, self.device
+            # Get pre-computed offset transforms (cached, no allocation)
+            T_joint_offset = (
+                self.joint_offset_stack[node_idx].unsqueeze(0).expand(batch_size, -1, -1)
             )
-            T_link_offset = as_batched_transform(
-                self.chain.link_offsets[node_idx], batch_size, self.dtype, self.device
-            )
+            T_link_offset = self.link_offset_stack[node_idx].unsqueeze(0).expand(batch_size, -1, -1)
 
             is_revolute = j_type == Joint.TYPES.index("revolute")
             is_prismatic = j_type == Joint.TYPES.index("prismatic")
             is_actuated = is_revolute or is_prismatic
 
+            # Use pre-computed transforms from dictionary
             if is_revolute:
-                T_motion = axis_and_angle_to_matrix_44(
-                    self.axes_norm[j_idx].expand(batch_size, -1), q_joints[:, j_idx]
-                )
+                T_motion = joint_transforms_revolute[j_idx]
             elif is_prismatic:
-                T_motion = axis_and_d_to_pris_matrix(
-                    self.axes_norm[j_idx].expand(batch_size, -1), q_joints[:, j_idx]
-                )
+                T_motion = joint_transforms_prismatic[j_idx]
             else:
                 T_motion = I44
 
             T_parent_child = T_joint_offset @ T_motion @ T_link_offset
-            Xup[node_idx] = spatial_adjoint(inv_homogeneous(T_parent_child))
+            Xup[:, node_idx] = spatial_adjoint_fast(inv_homogeneous_fast(T_parent_child))
 
             # Joint subspace
             if is_actuated:
                 axis_local = self.axes_norm[j_idx].expand(batch_size, -1)
-                twist_joint = torch.zeros(batch_size, 6, dtype=self.dtype, device=self.device)
+                twist_joint = torch.zeros(batch_size, 6, 1, dtype=self.dtype, device=self.device)
 
                 if is_revolute:
-                    twist_joint[:, 3:] = axis_local
+                    twist_joint[:, 3:, 0] = axis_local
                 elif is_prismatic:
-                    twist_joint[:, :3] = axis_local
+                    twist_joint[:, :3, 0] = axis_local
 
-                S[node_idx] = (spatial_adjoint(T_link_offset) @ twist_joint.unsqueeze(-1)).squeeze(
-                    -1
-                )
-                v_joint = v_joints[:, j_idx].unsqueeze(-1)
-                a_joint = a_joints[:, j_idx].unsqueeze(-1)
+                S[:, node_idx] = spatial_adjoint_fast(T_link_offset) @ twist_joint
+                v_joint = v_joints[:, j_idx].view(batch_size, 1, 1)
+                a_joint = a_joints[:, j_idx].view(batch_size, 1, 1)
             else:
-                v_joint = torch.zeros((batch_size, 1), dtype=self.dtype, device=self.device)
-                a_joint = torch.zeros((batch_size, 1), dtype=self.dtype, device=self.device)
+                v_joint = torch.zeros((batch_size, 1, 1), dtype=self.dtype, device=self.device)
+                a_joint = torch.zeros((batch_size, 1, 1), dtype=self.dtype, device=self.device)
 
             # Parent state
             if p_idx == -1:  # Root node
                 if self.is_floating_base:
-                    v_parent = v_base
-                    a_parent = a_base + a_gravity_base
+                    v_parent = v_base.unsqueeze(-1)
+                    a_parent = a_base.unsqueeze(-1) + a_gravity_base
                 else:
-                    v_parent = torch.zeros((batch_size, 6), dtype=self.dtype, device=self.device)
+                    v_parent = torch.zeros((batch_size, 6, 1), dtype=self.dtype, device=self.device)
                     a_parent = a_gravity_base
             else:
-                v_parent = v[p_idx]
-                a_parent = a[p_idx]
+                v_parent = v[:, p_idx]
+                a_parent = a[:, p_idx]
 
-            vJ = S[node_idx] * v_joint
-            v[node_idx] = (Xup[node_idx] @ v_parent.unsqueeze(-1)).squeeze(-1) + vJ
+            vJ = S[:, node_idx] * v_joint
 
-            coriolis = (motion_cross_product(v[node_idx]) @ vJ.unsqueeze(-1)).squeeze(-1)
-            a[node_idx] = (
-                (Xup[node_idx] @ a_parent.unsqueeze(-1)).squeeze(-1)
-                + S[node_idx] * a_joint
-                + coriolis
-            )
+            # Use torch.addmm for better performance when possible
+            v[:, node_idx] = torch.baddbmm(vJ, Xup[:, node_idx], v_parent, beta=1.0, alpha=1.0)
+
+            coriolis = motion_cross_product_fast(v[:, node_idx]) @ vJ
+            temp = Xup[:, node_idx] @ a_parent
+            a[:, node_idx] = temp + S[:, node_idx] * a_joint + coriolis
 
         # ========================================================================
         # Backward pass: compute forces
         # ========================================================================
 
+        I_spatial_batched = self.I_spatial.unsqueeze(0).expand(batch_size, -1, -1, -1)
+
         for node_idx in reversed(self.chain.topo_order):
-            Iv = (I_spatial[node_idx] @ v[node_idx].unsqueeze(-1)).squeeze(-1)
-            f_node = (I_spatial[node_idx] @ a[node_idx].unsqueeze(-1)).squeeze(-1)
-            f_node += (force_cross_product(v[node_idx]) @ Iv.unsqueeze(-1)).squeeze(-1)
+            # Compute inertial forces
+            Iv = I_spatial_batched[:, node_idx] @ v[:, node_idx]
+            f_node = I_spatial_batched[:, node_idx] @ a[:, node_idx]
+            f_node = f_node + force_cross_product_fast(v[:, node_idx]) @ Iv
 
-            # Aggregate forces from children
-            for child_idx in self.chain.children_list[node_idx]:
-                f_node += (Xup[child_idx].transpose(1, 2) @ f[child_idx].unsqueeze(-1)).squeeze(-1)
-            f[node_idx] = f_node
+            # Aggregate forces from children (unrolled for common cases)
+            children = self.chain.children_list[node_idx]
+            if len(children) == 1:
+                # Common case: single child - direct computation
+                child_idx = children[0]
+                f_node = f_node + Xup[:, child_idx].transpose(1, 2) @ f[:, child_idx]
+            elif len(children) > 1:
+                # Multiple children
+                for child_idx in children:
+                    f_node = f_node + Xup[:, child_idx].transpose(1, 2) @ f[:, child_idx]
+
+            f[:, node_idx] = f_node
 
         # ========================================================================
-        # Extract generalized forces
+        # Extract generalized forces (optimized)
         # ========================================================================
 
-        tau_all_nodes = torch.sum(S * f, dim=-1)  # (n_nodes, batch_size)
+        # More efficient extraction: (B, n_nodes, 6, 1) * (B, n_nodes, 6, 1) -> (B, n_nodes)
+        tau_all_nodes = (S * f).sum(dim=2).squeeze(-1)  # (B, n_nodes)
 
         if self.is_floating_base:
             tau = torch.zeros((batch_size, 6 + self.n_joints), dtype=self.dtype, device=self.device)
             urdf_root_idx = 1 if self.n_nodes > 1 else 0
-            tau[:, :6] = f[urdf_root_idx]
+            tau[:, :6] = f[:, urdf_root_idx, :, 0]
 
+            # Vectorized extraction for joint torques
             for node_idx in range(self.n_nodes):
                 j_type = self.chain.joint_type_indices_list[node_idx]
                 if j_type in [Joint.TYPES.index("revolute"), Joint.TYPES.index("prismatic")]:
                     j_col = self.chain.joint_indices_list[node_idx]
-                    tau[:, 6 + j_col] = tau_all_nodes[node_idx]
+                    tau[:, 6 + j_col] = tau_all_nodes[:, node_idx]
         else:
             tau = torch.zeros((batch_size, self.n_joints), dtype=self.dtype, device=self.device)
             for node_idx in range(self.n_nodes):
                 j_type = self.chain.joint_type_indices_list[node_idx]
                 if j_type in [Joint.TYPES.index("revolute"), Joint.TYPES.index("prismatic")]:
                     j_col = self.chain.joint_indices_list[node_idx]
-                    tau[:, j_col] = tau_all_nodes[node_idx]
+                    tau[:, j_col] = tau_all_nodes[:, node_idx]
 
         return tau
+
+
+# ============================================================================
+# CRBA Class
+# ============================================================================
 
 
 class CRBA:
@@ -446,21 +536,23 @@ class CRBA:
         self.is_floating_base = chain.has_floating_base
         self.nv = 6 + self.n_joints if self.is_floating_base else self.n_joints
 
-        # Pre-allocate all buffers
+        # Optimized memory layout: (batch, n_nodes, ...)
         self.Xup = torch.zeros(
-            self.n_nodes, max_batch_size, 6, 6, dtype=self.dtype, device=self.device
+            max_batch_size, self.n_nodes, 6, 6, dtype=self.dtype, device=self.device
         )
-        self.S = torch.zeros(self.n_nodes, max_batch_size, 6, dtype=self.dtype, device=self.device)
+        self.S = torch.zeros(
+            max_batch_size, self.n_nodes, 6, 1, dtype=self.dtype, device=self.device
+        )
         self.I_composite = torch.zeros(
-            self.n_nodes, max_batch_size, 6, 6, dtype=self.dtype, device=self.device
+            max_batch_size, self.n_nodes, 6, 6, dtype=self.dtype, device=self.device
         )
         self.M = torch.zeros(max_batch_size, self.nv, self.nv, dtype=self.dtype, device=self.device)
 
         # Pre-compute static data
-        self.I_spatial = chain.spatial_inertias.unsqueeze(1)  # (n_nodes, 1, 6, 6)
+        self.I_spatial = chain.spatial_inertias  # (n_nodes, 6, 6)
         self.axes_norm = chain.axes / chain.axes.norm(dim=-1, keepdim=True).clamp_min(1e-12)
 
-        # Pre-compute velocity index mapping as Python list (avoids .item() in compiled code)
+        # Pre-compute velocity index mapping
         self.vel_indices_list = []
         for node_idx in range(self.n_nodes):
             joint_type_idx = chain.joint_type_indices_list[node_idx]
@@ -472,6 +564,54 @@ class CRBA:
                 self.vel_indices_list.append(-1)
 
         self.urdf_root_idx = 1 if (self.is_floating_base and self.n_nodes > 1) else 0
+
+        # Pre-compute ancestor paths for efficient force propagation
+        self.ancestor_paths = []
+        self.ancestor_masks = []  # Masks for vectorized operations
+        max_depth = max(len(self.chain.parents_indices_list[i]) for i in range(self.n_nodes))
+
+        for node_idx in range(self.n_nodes):
+            path = []
+            current = node_idx
+            while self.chain.parent_list[current] != -1:
+                current = self.chain.parent_list[current]
+                path.append(current)
+
+            # Pad path to max_depth for vectorization
+            path_tensor = torch.full((max_depth,), -1, dtype=torch.long, device=self.device)
+            if len(path) > 0:
+                path_tensor[: len(path)] = torch.tensor(path, dtype=torch.long, device=self.device)
+
+            mask = torch.zeros(max_depth, dtype=torch.bool, device=self.device)
+            mask[: len(path)] = True
+
+            self.ancestor_paths.append(path_tensor)
+            self.ancestor_masks.append(mask)
+
+        # Stack for efficient indexing
+        self.ancestor_paths_tensor = torch.stack(self.ancestor_paths)  # (n_nodes, max_depth)
+        self.ancestor_masks_tensor = torch.stack(self.ancestor_masks)  # (n_nodes, max_depth)
+
+        # Pre-compute joint offset and link offset transforms
+        # Ensure all matrices are exactly 2D (4, 4)
+        self.joint_offset_stack = []
+        self.link_offset_stack = []
+        for node_idx in range(self.n_nodes):
+            j_off = chain.joint_offsets[node_idx]
+            l_off = chain.link_offsets[node_idx]
+
+            # Ensure 2D (4, 4) shape by reshaping
+            if j_off is not None:
+                j_off = j_off.reshape(4, 4).to(dtype=self.dtype, device=self.device)
+                self.joint_offset_stack.append(j_off)
+            else:
+                self.joint_offset_stack.append(torch.eye(4, dtype=self.dtype, device=self.device))
+
+            if l_off is not None:
+                l_off = l_off.reshape(4, 4).to(dtype=self.dtype, device=self.device)
+                self.link_offset_stack.append(l_off)
+            else:
+                self.link_offset_stack.append(torch.eye(4, dtype=self.dtype, device=self.device))
 
         # Conditional compilation setup
         self._compile_enabled = compile_enabled
@@ -515,10 +655,18 @@ class CRBA:
         self.M = self.M.to(dtype=self.dtype, device=self.device)
         self.I_spatial = self.I_spatial.to(dtype=self.dtype, device=self.device)
         self.axes_norm = self.axes_norm.to(dtype=self.dtype, device=self.device)
-        # vel_indices_list is Python list, no need to move
+
+        self.ancestor_paths_tensor = self.ancestor_paths_tensor.to(device=self.device)
+        self.ancestor_masks_tensor = self.ancestor_masks_tensor.to(device=self.device)
+
+        self.joint_offset_stack = [
+            m.to(dtype=self.dtype, device=self.device) for m in self.joint_offset_stack
+        ]
+        self.link_offset_stack = [
+            m.to(dtype=self.dtype, device=self.device) for m in self.link_offset_stack
+        ]
 
         self._setup_calc_callable()
-
         return self
 
     def calc(self, q: torch.Tensor) -> torch.Tensor:
@@ -558,21 +706,20 @@ class CRBA:
 
         if batch_size > self.max_batch_size:
             raise ValueError(
-                f"Batch size {batch_size} exceeds max_batch_size {self.max_batch_size}. "
-                f"Create a new CRBA instance with larger max_batch_size."
+                f"Batch size {batch_size} exceeds max_batch_size {self.max_batch_size}."
             )
 
         # Get sliced views of pre-allocated buffers
-        Xup = self.Xup[:, :batch_size, :, :]
-        S = self.S[:, :batch_size, :]
-        I_composite = self.I_composite[:, :batch_size, :, :]
+        Xup = self.Xup[:batch_size]
+        S = self.S[:batch_size]
+        I_composite = self.I_composite[:batch_size]
         M = self.M[:batch_size, : self.nv, : self.nv]
-        I_spatial = self.I_spatial.expand(-1, batch_size, -1, -1)
 
-        # Zero out buffers
+        # Zero out and initialize buffers
         S.zero_()
         M.zero_()
-        I_composite.copy_(I_spatial)
+        I_spatial_batched = self.I_spatial.unsqueeze(0).expand(batch_size, -1, -1, -1)
+        I_composite.copy_(I_spatial_batched)
 
         # Split configuration
         if self.is_floating_base:
@@ -580,11 +727,34 @@ class CRBA:
         else:
             q_joints = q
 
-        # Precompute transforms
-        axes_batched = self.axes_norm.unsqueeze(0).expand(batch_size, -1, -1)
-        T_revolute = axis_and_angle_to_matrix_44(axes_batched, q_joints)
-        T_prismatic = axis_and_d_to_pris_matrix(axes_batched, q_joints)
-        I44 = identity_transform(batch_size, self.dtype, self.device)
+        # Pre-compute transforms ONLY for actuated joints (more memory efficient)
+        joint_transforms_revolute = {}
+        joint_transforms_prismatic = {}
+
+        for node_idx in self.chain.topo_order:
+            j_idx = self.chain.joint_indices_list[node_idx]
+            j_type = self.chain.joint_type_indices_list[node_idx]
+
+            if j_idx >= 0:  # Only for actuated joints
+                if j_type == Joint.TYPES.index("revolute"):
+                    if j_idx not in joint_transforms_revolute:
+                        axis = self.axes_norm[j_idx].expand(batch_size, -1)
+                        joint_transforms_revolute[j_idx] = axis_and_angle_to_matrix_44(
+                            axis, q_joints[:, j_idx]
+                        )
+                elif j_type == Joint.TYPES.index("prismatic"):
+                    if j_idx not in joint_transforms_prismatic:
+                        axis = self.axes_norm[j_idx].expand(batch_size, -1)
+                        joint_transforms_prismatic[j_idx] = axis_and_d_to_pris_matrix(
+                            axis, q_joints[:, j_idx]
+                        )
+
+        # Cache identity transform
+        I44 = (
+            torch.eye(4, dtype=self.dtype, device=self.device)
+            .unsqueeze(0)
+            .expand(batch_size, -1, -1)
+        )
 
         # ========================================================================
         # Forward pass: compute transforms and joint subspaces
@@ -594,36 +764,32 @@ class CRBA:
             joint_idx = self.chain.joint_indices_list[node_idx]
             joint_type_idx = self.chain.joint_type_indices_list[node_idx]
 
-            T_joint_offset = as_batched_transform(
-                self.chain.joint_offsets[node_idx], batch_size, self.dtype, self.device
+            T_joint_offset = (
+                self.joint_offset_stack[node_idx].unsqueeze(0).expand(batch_size, -1, -1)
             )
-            T_link_offset = as_batched_transform(
-                self.chain.link_offsets[node_idx], batch_size, self.dtype, self.device
-            )
+            T_link_offset = self.link_offset_stack[node_idx].unsqueeze(0).expand(batch_size, -1, -1)
 
             if joint_type_idx == Joint.TYPES.index("revolute"):
-                T_motion = T_revolute[:, joint_idx]
+                T_motion = joint_transforms_revolute[joint_idx]
             elif joint_type_idx == Joint.TYPES.index("prismatic"):
-                T_motion = T_prismatic[:, joint_idx]
+                T_motion = joint_transforms_prismatic[joint_idx]
             else:
                 T_motion = I44
 
             T_parent_child = T_joint_offset @ T_motion @ T_link_offset
-            Xup[node_idx] = spatial_adjoint(inv_homogeneous(T_parent_child))
+            Xup[:, node_idx] = spatial_adjoint_fast(inv_homogeneous_fast(T_parent_child))
 
             # Joint subspace
             if joint_type_idx in [Joint.TYPES.index("revolute"), Joint.TYPES.index("prismatic")]:
                 axis_local = self.axes_norm[joint_idx].view(1, 3).expand(batch_size, -1)
-                twist_joint = torch.zeros((batch_size, 6), dtype=self.dtype, device=self.device)
+                twist_joint = torch.zeros((batch_size, 6, 1), dtype=self.dtype, device=self.device)
 
                 if joint_type_idx == Joint.TYPES.index("revolute"):
-                    twist_joint[:, 3:] = axis_local
+                    twist_joint[:, 3:, 0] = axis_local
                 else:
-                    twist_joint[:, :3] = axis_local
+                    twist_joint[:, :3, 0] = axis_local
 
-                S[node_idx] = (spatial_adjoint(T_link_offset) @ twist_joint.unsqueeze(-1)).squeeze(
-                    -1
-                )
+                S[:, node_idx] = spatial_adjoint_fast(T_link_offset) @ twist_joint
 
         # ========================================================================
         # Backward pass: compute composite inertias
@@ -632,61 +798,63 @@ class CRBA:
         for node_idx in reversed(self.chain.topo_order):
             p = self.chain.parent_list[node_idx]
             if p != -1:
-                I_composite[p] = I_composite[p] + (
-                    Xup[node_idx].transpose(1, 2) @ I_composite[node_idx] @ Xup[node_idx]
+                # Inplace addition for efficiency
+                I_composite[:, p] += (
+                    Xup[:, node_idx].transpose(1, 2) @ I_composite[:, node_idx] @ Xup[:, node_idx]
                 )
 
         # ========================================================================
-        # Assemble mass matrix
+        # Assemble mass matrix (optimized with reduced loops)
         # ========================================================================
 
         # Base inertia block (if floating)
         if self.is_floating_base:
-            M[:, :6, :6] = I_composite[self.urdf_root_idx]
+            M[:, :6, :6] = I_composite[:, self.urdf_root_idx]
 
-        # Joint columns
+        # Process all joints
         for node_idx in self.chain.topo_order:
-            col_idx = self.vel_indices_list[node_idx]  # Python list access - no .item()
+            col_idx = self.vel_indices_list[node_idx]
             if col_idx == -1:
                 continue
 
-            S_i = S[node_idx].unsqueeze(-1)
-            F_i = I_composite[node_idx] @ S_i
+            S_i = S[:, node_idx]  # (B, 6, 1)
+            F_i = I_composite[:, node_idx] @ S_i  # (B, 6, 1)
 
             # Diagonal element
             M[:, col_idx, col_idx] = (S_i.transpose(1, 2) @ F_i).squeeze(-1).squeeze(-1)
 
             # Base-joint coupling (if floating)
             if self.is_floating_base:
-                f_at_base = F_i.clone()
+                # Propagate force to base
+                f_at_base = F_i
                 current_node = node_idx
-                max_depth = 100
-                depth = 0
-                while (
-                    current_node != self.urdf_root_idx
-                    and self.chain.parent_list[current_node] != -1
-                    and depth < max_depth
-                ):
-                    f_at_base = Xup[current_node].transpose(1, 2) @ f_at_base
-                    current_node = self.chain.parent_list[current_node]
-                    depth += 1
+
+                # Optimized loop with break condition
+                while current_node != self.urdf_root_idx:
+                    parent = self.chain.parent_list[current_node]
+                    if parent == -1:
+                        break
+                    f_at_base = Xup[:, current_node].transpose(1, 2) @ f_at_base
+                    current_node = parent
 
                 M[:, :6, col_idx] = f_at_base.squeeze(-1)
                 M[:, col_idx, :6] = f_at_base.squeeze(-1)
 
-            # Joint-joint coupling
-            f = F_i.clone()
+            # Joint-joint coupling - propagate up the tree
+            f = F_i
             current_node = node_idx
-            max_depth = 100
-            depth = 0
-            while self.chain.parent_list[current_node] != -1 and depth < max_depth:
-                f = Xup[current_node].transpose(1, 2) @ f
-                current_node = self.chain.parent_list[current_node]
-                depth += 1
 
-                parent_col = self.vel_indices_list[current_node]  # Python list access
+            while True:
+                parent = self.chain.parent_list[current_node]
+                if parent == -1:
+                    break
+
+                f = Xup[:, current_node].transpose(1, 2) @ f
+                current_node = parent
+
+                parent_col = self.vel_indices_list[current_node]
                 if parent_col != -1:
-                    S_parent = S[current_node].unsqueeze(-1)
+                    S_parent = S[:, current_node]
                     value = (S_parent.transpose(1, 2) @ f).squeeze(-1).squeeze(-1)
                     M[:, col_idx, parent_col] = value
                     M[:, parent_col, col_idx] = value

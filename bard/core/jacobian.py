@@ -1,3 +1,10 @@
+"""
+Optimized Jacobian computation with pre-allocated memory.
+
+This module provides efficient Jacobian matrix computation for robot kinematics,
+optimized with JIT-compiled utility functions and pre-allocated memory buffers.
+"""
+
 from typing import Any, Dict, Optional, Tuple
 import torch
 from bard.core import chain
@@ -17,6 +24,41 @@ from .utils import (
 
 
 class Jacobian:
+    """Optimized Jacobian matrix computation with pre-allocated memory.
+
+    This class computes the geometric Jacobian matrix that relates joint velocities
+    to end-effector spatial velocity. The Jacobian can be computed in either the
+    world frame or the local (body) frame.
+
+    Args:
+        chain (chain.Chain): The robot's kinematic chain definition.
+        max_batch_size (int, optional): The maximum batch size the instance will
+            support. Defaults to 1024.
+        compile_enabled (bool, optional): If ``True``, the core computation
+            will be JIT-compiled with ``torch.compile``. Defaults to ``False``.
+        compile_kwargs (Dict[str, Any], optional): A dictionary of keyword
+            arguments to pass to ``torch.compile``.
+            Defaults to ``{"mode": "reduce-overhead"}``.
+
+    Attributes:
+        chain (chain.Chain): The robot kinematic chain.
+        max_batch_size (int): The maximum supported batch size.
+        dtype (torch.dtype): The data type of the tensors.
+        device (torch.device): The device where tensors are stored.
+        nv (int): The dimension of velocity space.
+
+    Example:
+        .. code-block:: python
+
+            # Create a Jacobian instance once
+            jac = Jacobian(robot_chain, max_batch_size=128)
+            eef_frame_id = robot_chain.get_frame_id("end_effector_link")
+
+            # Use in a loop for efficient computation
+            for q in data_loader:
+                J_world = jac.calc(q, eef_frame_id, reference_frame="world")
+                # ... use the Jacobian ...
+    """
 
     def __init__(
         self,
@@ -62,7 +104,17 @@ class Jacobian:
         self._setup_calc_callable()
 
     def to(self, dtype: Optional[torch.dtype] = None, device: Optional[torch.device] = None):
+        """Move all internal buffers to a specified dtype and/or device.
 
+        This is an in-place operation.
+
+        Args:
+            dtype (torch.dtype, optional): The target data type. Defaults to ``None``.
+            device (torch.device, optional): The target device. Defaults to ``None``.
+
+        Returns:
+            Jacobian: The instance itself for method chaining.
+        """
         if dtype is not None:
             self.dtype = dtype
         if device is not None:
@@ -83,6 +135,28 @@ class Jacobian:
         reference_frame: str = "world",
         return_eef_pose: bool = False,
     ) -> torch.Tensor:
+        """Compute the Jacobian matrix for a specific frame.
+
+        Args:
+            q (torch.Tensor): A batch of generalized positions.
+                - For fixed-base robots, shape is ``(B, n_joints)``.
+                - For floating-base robots, shape is ``(B, 7 + n_joints)``.
+            frame_id (int): The integer index of the target frame.
+            reference_frame (str, optional): The frame of reference for the
+                Jacobian. Can be ``"world"`` or ``"local"``. Defaults to ``"world"``.
+            return_eef_pose (bool, optional): If ``True``, also returns the
+                world-frame pose of the target frame. Defaults to ``False``.
+
+        Returns:
+            torch.Tensor or Tuple[torch.Tensor, torch.Tensor]:
+                - If ``return_eef_pose=False``: The Jacobian matrix of shape ``(B, 6, nv)``.
+                - If ``return_eef_pose=True``: A tuple ``(J, T_world_to_frame)`` where
+                  ``J`` is the Jacobian and ``T_world_to_frame`` is the pose matrix
+                  of shape ``(B, 4, 4)``.
+
+        Raises:
+            ValueError: If the input batch size ``B`` exceeds ``self.max_batch_size``.
+        """
         batch_size = q.shape[0]
         if batch_size > self.max_batch_size:
             raise ValueError(
