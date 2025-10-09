@@ -57,7 +57,8 @@ dev = [
     "pytest-cov>=4.0",
     "pytest-benchmark>=4.0",
     "matplotlib>=3.5.0",
-    "black>=24.1"
+    "black>=24.1",
+    "tabulate>=0.9",
 ]
 
 docs = [

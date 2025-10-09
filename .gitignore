@@ -15,3 +15,5 @@ __pycache__/
 # Packaging
 *.egg-info/
 *.egg-info
+
+/benchmarks/bench_logs
