@@ -52,7 +52,7 @@ except Exception:
 
 def build_pin_model(urdf_path: Path):
     """Create Pinocchio model+data for a free-flyer base."""
-    model = pin.buildModelFromUrdf(str(urdf_path), pin.JointModelFreeFlyer())
+    model = pin.buildModelFromUrdf(urdf_path, pin.JointModelFreeFlyer())
     data = model.createData()
     return model, data
 
@@ -72,6 +72,7 @@ class PinocchioTorchWrapper:
 
     Methods:
       - calc_frame_accel(q, qd, qdd, frame_id, reference_frame) -> (B,6)
+      - calc_bias_accel(q, qd, frame_id, reference_frame) -> (B,6)  [NEW: qdd=0]
       - calc_mass_matrix(q) -> (B,nv,nv)  [CRBA]
       - calc_frame_jacobian(q, frame_id, reference_frame) -> (B,6,nv)
       - calc_frame_pose(q, frame_id) -> (B,4,4)  [Forward Kinematics]
@@ -97,6 +98,18 @@ class PinocchioTorchWrapper:
 
     @torch.no_grad()
     def calc_frame_accel(self, q, qd, qdd, frame_id, reference_frame="world"):
+        """Compute full spatial acceleration.
+        
+        Args:
+            q: Batch of positions (B, nq)
+            qd: Batch of velocities (B, nv)
+            qdd: Batch of accelerations (B, nv)
+            frame_id: Frame index
+            reference_frame: 'world' or 'local'
+        
+        Returns:
+            Spatial acceleration (B, 6)
+        """
         B = q.shape[0]
         out = np.zeros((B, 6), dtype=np.float64 if self.dtype == torch.float64 else np.float32)
         pin_ref = ref_frame_to_pin(reference_frame)
@@ -105,6 +118,33 @@ class PinocchioTorchWrapper:
             qd_i = qd[i].detach().cpu().numpy()
             qdd_i = qdd[i].detach().cpu().numpy()
             pin.forwardKinematics(self.model, self.data, q_list[i], qd_i, qdd_i)
+            a = pin.getFrameAcceleration(self.model, self.data, frame_id, pin_ref).vector
+            out[i, :] = a
+        return torch.tensor(out, device=self.device, dtype=self.dtype)
+
+    @torch.no_grad()
+    def calc_bias_accel(self, q, qd, frame_id, reference_frame="world"):
+        """Compute bias acceleration (Coriolis + centrifugal terms only).
+        
+        This is equivalent to calling calc_frame_accel with qdd=0.
+        
+        Args:
+            q: Batch of positions (B, nq)
+            qd: Batch of velocities (B, nv)
+            frame_id: Frame index
+            reference_frame: 'world' or 'local'
+        
+        Returns:
+            Bias acceleration (B, 6)
+        """
+        B = q.shape[0]
+        out = np.zeros((B, 6), dtype=np.float64 if self.dtype == torch.float64 else np.float32)
+        pin_ref = ref_frame_to_pin(reference_frame)
+        q_list = self._to_numpy_q(q)
+        for i in range(B):
+            qd_i = qd[i].detach().cpu().numpy()
+            qdd_zero = np.zeros_like(qd_i)  # Zero acceleration for bias computation
+            pin.forwardKinematics(self.model, self.data, q_list[i], qd_i, qdd_zero)
             a = pin.getFrameAcceleration(self.model, self.data, frame_id, pin_ref).vector
             out[i, :] = a
         return torch.tensor(out, device=self.device, dtype=self.dtype)
@@ -157,3 +197,4 @@ class PinocchioTorchWrapper:
             tau = pin.rnea(self.model, self.data, q_list[i], qd_i, qdd_i)
             out[i, :] = tau
         return torch.tensor(out, device=self.device, dtype=self.dtype)
+    

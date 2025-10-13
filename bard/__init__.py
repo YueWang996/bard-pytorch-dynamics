@@ -16,6 +16,11 @@ __author__ = "Yue Wang"
 
 from .core.chain import Chain
 from .core.kinematics import ForwardKinematics, SpatialAcceleration
+from .core.acceleration import (
+    BiasAcceleration,
+    SpatialAccelerationJacobian,
+    MultiFrameBiasAcceleration,
+)
 from .core.jacobian import Jacobian
 from .core.dynamics import RNEA, CRBA
 from .parsers.urdf import build_chain_from_urdf

@@ -29,9 +29,7 @@ from benchconf import (
 
 
 def load_robot():
-    with open(URDF_PATH, "rb") as f:
-        urdf_string = f.read()
-    chain = build_chain_from_urdf(urdf_string, floating_base=True).to(dtype=DTYPE, device=DEVICE)
+    chain = build_chain_from_urdf(URDF_PATH, floating_base=True).to(dtype=DTYPE, device=DEVICE)
     pin_model, pin_data = build_pin_model(URDF_PATH)
     return chain, pin_model, pin_data
 
@@ -136,7 +134,7 @@ def main():
         dtype=DTYPE, device=DEVICE
     )
     test_frame = chain.get_frame_names(exclude_fixed=True)[-1]
-    bard_fid = chain.get_frame_indices(test_frame).item()
+    bard_fid = chain.get_frame_id(test_frame)
     pin_fid = pin_model.getFrameId(test_frame)
     print("frame={} id={} nv={}".format(test_frame, bard_fid, chain.nv))
 
