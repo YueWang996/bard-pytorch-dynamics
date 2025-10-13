@@ -99,14 +99,14 @@ class PinocchioTorchWrapper:
     @torch.no_grad()
     def calc_frame_accel(self, q, qd, qdd, frame_id, reference_frame="world"):
         """Compute full spatial acceleration.
-        
+
         Args:
             q: Batch of positions (B, nq)
             qd: Batch of velocities (B, nv)
             qdd: Batch of accelerations (B, nv)
             frame_id: Frame index
             reference_frame: 'world' or 'local'
-        
+
         Returns:
             Spatial acceleration (B, 6)
         """
@@ -125,15 +125,15 @@ class PinocchioTorchWrapper:
     @torch.no_grad()
     def calc_bias_accel(self, q, qd, frame_id, reference_frame="world"):
         """Compute bias acceleration (Coriolis + centrifugal terms only).
-        
+
         This is equivalent to calling calc_frame_accel with qdd=0.
-        
+
         Args:
             q: Batch of positions (B, nq)
             qd: Batch of velocities (B, nv)
             frame_id: Frame index
             reference_frame: 'world' or 'local'
-        
+
         Returns:
             Bias acceleration (B, 6)
         """
@@ -197,4 +197,3 @@ class PinocchioTorchWrapper:
             tau = pin.rnea(self.model, self.data, q_list[i], qd_i, qdd_i)
             out[i, :] = tau
         return torch.tensor(out, device=self.device, dtype=self.dtype)
-    
