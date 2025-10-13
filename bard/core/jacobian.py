@@ -132,9 +132,9 @@ class Jacobian:
         self,
         q: torch.Tensor,
         frame_id: int,
-        reference_frame: str = "world",
+        reference_frame: str,
         return_eef_pose: bool = False,
-    ) -> torch.Tensor:
+    ) -> torch.Tensor | Tuple[torch.Tensor, torch.Tensor]:
         """Compute the Jacobian matrix for a specific frame.
 
         Args:
@@ -142,8 +142,8 @@ class Jacobian:
                 - For fixed-base robots, shape is ``(B, n_joints)``.
                 - For floating-base robots, shape is ``(B, 7 + n_joints)``.
             frame_id (int): The integer index of the target frame.
-            reference_frame (str, optional): The frame of reference for the
-                Jacobian. Can be ``"world"`` or ``"local"``. Defaults to ``"world"``.
+            reference_frame (str): The frame of reference for the
+                Jacobian. Can be ``"world"`` or ``"local"``.
             return_eef_pose (bool, optional): If ``True``, also returns the
                 world-frame pose of the target frame. Defaults to ``False``.
 
@@ -160,8 +160,11 @@ class Jacobian:
         batch_size = q.shape[0]
         if batch_size > self.max_batch_size:
             raise ValueError(
-                f"Batch size {batch_size} exceeds max_batch_size {self.max_batch_size}..."
+                f"Batch size {batch_size} exceeds max_batch_size {self.max_batch_size}. "
+                f"Create a new Jacobian instance with larger max_batch_size."
             )
+        if reference_frame not in ["world", "local"]:
+            raise ValueError('reference_frame must be "world" or "local"')
         return self._calc_callable(q, frame_id, reference_frame, return_eef_pose)
 
     def _setup_calc_callable(self):
@@ -174,16 +177,10 @@ class Jacobian:
         self,
         q: torch.Tensor,
         frame_id: int,
-        reference_frame: str = "world",
+        reference_frame: str,
         return_eef_pose: bool = False,
-    ) -> torch.Tensor:
+    ) -> torch.Tensor | Tuple[torch.Tensor, torch.Tensor]:
         batch_size = q.shape[0]
-
-        if batch_size > self.max_batch_size:
-            raise ValueError(
-                f"Batch size {batch_size} exceeds max_batch_size {self.max_batch_size}. "
-                f"Create a new Jacobian instance with larger max_batch_size."
-            )
 
         # Get path from root to target frame as Python list
         path_nodes = self.chain.parents_indices_list[frame_id]

@@ -413,7 +413,7 @@ class SpatialAcceleration:
         qd: torch.Tensor,
         qdd: torch.Tensor,
         frame_id: int,
-        reference_frame: str = "local",
+        reference_frame: str,
     ) -> torch.Tensor:
         """Compute the spatial acceleration of a frame.
 
@@ -427,9 +427,9 @@ class SpatialAcceleration:
             qdd (torch.Tensor): A batch of generalized accelerations, with the
                 same shape as ``qd``.
             frame_id (int): The integer index of the target frame.
-            reference_frame (str, optional): The frame of reference for the
+            reference_frame (str): The frame of reference for the
                 output acceleration. Can be ``"world"`` or ``"local"`` (the frame's
-                own coordinate system). Defaults to ``"local"``.
+                own coordinate system).
 
         Returns:
             torch.Tensor: The spatial acceleration ``[linear; angular]`` of the
@@ -443,6 +443,8 @@ class SpatialAcceleration:
             raise ValueError(
                 f"Batch size {batch_size} exceeds max_batch_size {self.max_batch_size}..."
             )
+        if reference_frame not in ["world", "local"]:
+            raise ValueError('reference_frame must be "world" or "local"')
         return self._calc_callable(q, qd, qdd, frame_id, reference_frame)
 
     def _setup_calc_callable(self):
@@ -457,7 +459,7 @@ class SpatialAcceleration:
         qd: torch.Tensor,
         qdd: torch.Tensor,
         frame_id: int,
-        reference_frame: str = "local",
+        reference_frame: str,
     ) -> torch.Tensor:
         batch_size = q.shape[0]
 

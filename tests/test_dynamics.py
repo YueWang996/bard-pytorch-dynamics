@@ -75,7 +75,7 @@ def compare_matrices(M_bard, M_pin, dtype, name="matrix"):
         )
 
 
-@pytest.mark.skipif(not hasattr(pin, "buildModelFromXML"), reason="Pinocchio not available")
+@pytest.mark.skipif(not hasattr(pin, "buildModelFromUrdf"), reason="Pinocchio not available")
 class TestDynamics:
     """Test suite for dynamics algorithms (RNEA and CRBA) with both fixed-base and floating-base robots."""
 
@@ -84,14 +84,14 @@ class TestDynamics:
     # ========================================================================
 
     @pytest.fixture(scope="class")
-    def pin_model_fixed(self, urdf_string):
+    def pin_model_fixed(self, urdf_path):
         """Builds Pinocchio model for fixed-base robot."""
-        model = pin.buildModelFromXML(urdf_string)
+        model = pin.buildModelFromUrdf(urdf_path)
         return model, model.createData()
 
-    def test_fixed_base_rnea_full(self, urdf_string, pin_model_fixed, dtype, device):
+    def test_fixed_base_rnea_full(self, urdf_path, pin_model_fixed, dtype, device):
         """Verifies full RNEA (gravity + coriolis + inertia) for fixed-base robot."""
-        bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
+        bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model_fixed
 
         # Create RNEA instance
@@ -113,9 +113,9 @@ class TestDynamics:
 
         compare_vectors(tau_bard, tau_pin, dtype, name="Full RNEA")
 
-    def test_fixed_base_rnea_components(self, urdf_string, pin_model_fixed, dtype, device):
+    def test_fixed_base_rnea_components(self, urdf_path, pin_model_fixed, dtype, device):
         """Verifies RNEA component separation (gravity, coriolis, full) for fixed-base robot."""
-        bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
+        bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model_fixed
 
         rnea = RNEA(bard_chain, max_batch_size=1, compile_enabled=False)
@@ -146,9 +146,9 @@ class TestDynamics:
         tau_pin = pin.rnea(pin_model_obj, pin_data, q_pin, qd_pin, qdd_pin)
         compare_vectors(tau_bard, tau_pin, dtype, name="Full RNEA")
 
-    def test_fixed_base_rnea_batched(self, urdf_string, pin_model_fixed, dtype, device):
+    def test_fixed_base_rnea_batched(self, urdf_path, pin_model_fixed, dtype, device):
         """Verifies batched RNEA computation for fixed-base robot."""
-        bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
+        bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model_fixed
         batch_size = 20
 
@@ -177,9 +177,9 @@ class TestDynamics:
     # Fixed-Base CRBA Tests
     # ========================================================================
 
-    def test_fixed_base_crba(self, urdf_string, pin_model_fixed, dtype, device):
+    def test_fixed_base_crba(self, urdf_path, pin_model_fixed, dtype, device):
         """Verifies CRBA mass matrix computation for fixed-base robot."""
-        bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
+        bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model_fixed
 
         crba = CRBA(bard_chain, max_batch_size=1, compile_enabled=False)
@@ -195,9 +195,9 @@ class TestDynamics:
 
         compare_matrices(M_bard, M_pin, dtype, name="CRBA mass matrix")
 
-    def test_fixed_base_crba_batched(self, urdf_string, pin_model_fixed, dtype, device):
+    def test_fixed_base_crba_batched(self, urdf_path, pin_model_fixed, dtype, device):
         """Verifies batched CRBA computation for fixed-base robot."""
-        bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
+        bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model_fixed
         batch_size = 20
 
@@ -214,9 +214,9 @@ class TestDynamics:
             M_pin = pin.crba(pin_model_obj, pin_data, q_batch[i].cpu().numpy())
             compare_matrices(M_bard_batch[i], M_pin, dtype, name=f"CRBA batch[{i}]")
 
-    def test_fixed_base_rnea_crba_consistency(self, urdf_string, pin_model_fixed, dtype, device):
+    def test_fixed_base_rnea_crba_consistency(self, urdf_path, pin_model_fixed, dtype, device):
         """Verifies RNEA-CRBA consistency: M*qdd == RNEA(q, 0, qdd, g=0)."""
-        bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
+        bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
 
         rnea = RNEA(bard_chain, max_batch_size=1, compile_enabled=False)
         crba = CRBA(bard_chain, max_batch_size=1, compile_enabled=False)
@@ -245,14 +245,14 @@ class TestDynamics:
     # ========================================================================
 
     @pytest.fixture(scope="class")
-    def pin_model_floating(self, urdf_string):
+    def pin_model_floating(self, urdf_path):
         """Builds Pinocchio model for floating-base robot."""
-        model = pin.buildModelFromXML(urdf_string, pin.JointModelFreeFlyer())
+        model = pin.buildModelFromUrdf(urdf_path, pin.JointModelFreeFlyer())
         return model, model.createData()
 
-    def test_floating_base_rnea_full(self, urdf_string, pin_model_floating, dtype, device):
+    def test_floating_base_rnea_full(self, urdf_path, pin_model_floating, dtype, device):
         """Verifies full RNEA for floating-base robot."""
-        bard_chain = build_chain_from_urdf(urdf_string, floating_base=True).to(
+        bard_chain = build_chain_from_urdf(urdf_path, floating_base=True).to(
             dtype=dtype, device=device
         )
         pin_model_obj, pin_data = pin_model_floating
@@ -291,9 +291,9 @@ class TestDynamics:
 
         compare_vectors(tau_bard, tau_pin, dtype, name="Floating-base full RNEA")
 
-    def test_floating_base_rnea_batched(self, urdf_string, pin_model_floating, dtype, device):
+    def test_floating_base_rnea_batched(self, urdf_path, pin_model_floating, dtype, device):
         """Verifies batched RNEA for floating-base robot."""
-        bard_chain = build_chain_from_urdf(urdf_string, floating_base=True).to(
+        bard_chain = build_chain_from_urdf(urdf_path, floating_base=True).to(
             dtype=dtype, device=device
         )
         pin_model_obj, pin_data = pin_model_floating
@@ -340,9 +340,9 @@ class TestDynamics:
     # Floating-Base CRBA Tests
     # ========================================================================
 
-    def test_floating_base_crba(self, urdf_string, pin_model_floating, dtype, device):
+    def test_floating_base_crba(self, urdf_path, pin_model_floating, dtype, device):
         """Verifies CRBA for floating-base robot."""
-        bard_chain = build_chain_from_urdf(urdf_string, floating_base=True).to(
+        bard_chain = build_chain_from_urdf(urdf_path, floating_base=True).to(
             dtype=dtype, device=device
         )
         pin_model_obj, pin_data = pin_model_floating
@@ -373,9 +373,9 @@ class TestDynamics:
 
         compare_matrices(M_bard, M_pin, dtype, name="Floating-base CRBA")
 
-    def test_floating_base_crba_batched(self, urdf_string, pin_model_floating, dtype, device):
+    def test_floating_base_crba_batched(self, urdf_path, pin_model_floating, dtype, device):
         """Verifies batched CRBA for floating-base robot."""
-        bard_chain = build_chain_from_urdf(urdf_string, floating_base=True).to(
+        bard_chain = build_chain_from_urdf(urdf_path, floating_base=True).to(
             dtype=dtype, device=device
         )
         pin_model_obj, pin_data = pin_model_floating
@@ -409,10 +409,10 @@ class TestDynamics:
             compare_matrices(M_bard_batch[i], M_pin, dtype, name=f"Floating CRBA batch[{i}]")
 
     def test_floating_base_rnea_crba_consistency(
-        self, urdf_string, pin_model_floating, dtype, device
+        self, urdf_path, pin_model_floating, dtype, device
     ):
         """Verifies RNEA-CRBA consistency for floating-base: M*qdd == RNEA(q, 0, qdd, g=0)."""
-        bard_chain = build_chain_from_urdf(urdf_string, floating_base=True).to(
+        bard_chain = build_chain_from_urdf(urdf_path, floating_base=True).to(
             dtype=dtype, device=device
         )
 
@@ -448,9 +448,9 @@ class TestDynamics:
     # Edge Cases and Stress Tests
     # ========================================================================
 
-    def test_rnea_batch_size_validation(self, urdf_string, dtype, device):
+    def test_rnea_batch_size_validation(self, urdf_path, dtype, device):
         """Verifies that RNEA raises error when exceeding max_batch_size."""
-        bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
+        bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
 
         rnea = RNEA(bard_chain, max_batch_size=5, compile_enabled=False)
 
@@ -468,9 +468,9 @@ class TestDynamics:
         with pytest.raises(ValueError, match="exceeds max_batch_size"):
             _ = rnea.calc(q_large, qd_large, qdd_large)
 
-    def test_crba_batch_size_validation(self, urdf_string, dtype, device):
+    def test_crba_batch_size_validation(self, urdf_path, dtype, device):
         """Verifies that CRBA raises error when exceeding max_batch_size."""
-        bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
+        bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
 
         crba = CRBA(bard_chain, max_batch_size=5, compile_enabled=False)
 
@@ -484,9 +484,9 @@ class TestDynamics:
         with pytest.raises(ValueError, match="exceeds max_batch_size"):
             _ = crba.calc(q_large)
 
-    def test_crba_symmetry(self, urdf_string, dtype, device):
+    def test_crba_symmetry(self, urdf_path, dtype, device):
         """Verifies that mass matrix is symmetric."""
-        bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
+        bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
 
         crba = CRBA(bard_chain, max_batch_size=1, compile_enabled=False)
 
@@ -501,9 +501,9 @@ class TestDynamics:
             M, M.T, atol=tol
         ), f"Mass matrix is not symmetric: max asymmetry = {(M - M.T).abs().max():.3e}"
 
-    def test_crba_positive_definite(self, urdf_string, dtype, device):
+    def test_crba_positive_definite(self, urdf_path, dtype, device):
         """Verifies that mass matrix is positive definite."""
-        bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
+        bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
 
         crba = CRBA(bard_chain, max_batch_size=1, compile_enabled=False)
 
@@ -520,12 +520,12 @@ class TestDynamics:
             min_eigenvalue > 0
         ), f"Mass matrix is not positive definite: min eigenvalue = {min_eigenvalue:.3e}"
 
-    def test_rnea_with_compilation(self, urdf_string, pin_model_fixed, dtype, device):
+    def test_rnea_with_compilation(self, urdf_path, pin_model_fixed, dtype, device):
         """Verifies that RNEA works with torch.compile enabled."""
         # Skip compilation tests for now
         pytest.skip("Placeholder test - compilation tests is to be implemented")
 
-    def test_crba_with_compilation(self, urdf_string, pin_model_fixed, dtype, device):
+    def test_crba_with_compilation(self, urdf_path, pin_model_fixed, dtype, device):
         """Verifies that CRBA works with torch.compile enabled."""
         # Skip compilation tests for now
         pytest.skip("Placeholder test - compilation tests is to be implemented")

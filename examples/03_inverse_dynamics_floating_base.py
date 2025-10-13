@@ -11,15 +11,9 @@ def main():
     """
     An example of computing inverse dynamics (RNEA) for a floating-base robot.
     """
-    try:
-        with open(urdf_path, "rb") as f:
-            urdf_string = f.read()
-    except FileNotFoundError:
-        print(f"Error: {urdf_path} not found. Please provide a valid path.")
-        return
 
     # 1. Build the chain with floating_base=True
-    chain = build_chain_from_urdf(urdf_string, floating_base=True).to(dtype=torch.float64)
+    chain = build_chain_from_urdf(urdf_path, floating_base=True).to(dtype=torch.float64)
     print(f"Floating-base robot loaded. nq={chain.nq}, nv={chain.nv}")
 
     # Instantiate the RNEA class once

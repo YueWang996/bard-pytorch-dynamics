@@ -566,21 +566,19 @@ class Chain:
         return names
 
     @lru_cache
-    def get_frame_indices(self, *frame_names: str) -> torch.Tensor:
-        """Gets the integer indices for a list of frame names.
+    def get_frame_id(self, frame_name: str) -> int:
+        """Gets the integer index for a frame name.
 
-        These indices correspond to the row/column in pre-computed data structures
+        This index corresponds to the row/column in pre-computed data structures
         like ``spatial_inertias``.
 
         Args:
-            *frame_names (str): One or more frame names.
+            frame_name (str): The frame name.
 
         Returns:
-            torch.Tensor: A 1D tensor of integer indices.
+            torch.Tensor: A tensor containing the integer index.
         """
-        return torch.tensor(
-            [self.frame_to_idx[n] for n in frame_names], dtype=torch.long, device=self.device
-        )
+        return self.frame_to_idx[frame_name]
 
     def ensure_tensor(self, value: Union[torch.Tensor, np.ndarray, List, Dict]) -> torch.Tensor:
         """Converts various input types to a tensor in the correct joint order.

@@ -7,6 +7,10 @@ handles parsing of links, joints, and inertial properties, and supports the
 creation of both fixed-base and floating-base robot representations.
 """
 
+import os
+import io
+from typing import Union
+
 from .urdf_parser_py.urdf import URDF, Mesh, Cylinder, Box, Sphere
 from bard.structures import Frame, Joint, Link, Visual
 from bard.core import chain
@@ -121,43 +125,44 @@ def _build_chain_recurse(root_frame, lmap, joints):
 
 
 def build_chain_from_urdf(
-    data: str,
+    path: Union[str, os.PathLike],
     *,
     floating_base: bool = False,
     base_frame_name: str = "floating_base",
     dtype=torch.float32,
     device="cpu",
 ):
-    """Builds a `bard` Chain object from a URDF data string.
-
-    This is the main entry point for creating a kinematic chain from a URDF.
-    It parses the XML data, constructs the kinematic tree, and can optionally
-    prepend a 6-DOF floating base for models like quadrupeds or humanoids.
+    """Builds a `bard` Chain object from a URDF file.
 
     Args:
-        data (str or bytes): The URDF XML content as a string or bytes.
+        path (str | os.PathLike): Filesystem path to the URDF file.
         floating_base (bool, optional): If True, a 6-DOF floating base is
             prepended to the root of the kinematic tree. Defaults to False.
         base_frame_name (str, optional): The name assigned to the synthetic base
             frame when `floating_base` is True. Defaults to "floating_base".
-        dtype (torch.dtype, optional): The PyTorch data type to use for the
-            chain's tensors. Defaults to torch.float32.
-        device (str or torch.device, optional): The PyTorch device to place the
-            chain's tensors on. Defaults to "cpu".
+        dtype (torch.dtype, optional): PyTorch dtype for the chain's tensors.
+            Defaults to torch.float32.
+        device (str | torch.device, optional): PyTorch device for the chain's tensors.
+            Defaults to "cpu".
 
     Returns:
-        bard.core.chain.Chain: The constructed kinematic chain object. The configuration
-            vector `q` will have the following format:
-            - **Fixed-base**: `q = [joint_angle_1, ...]`
-            - **Floating-base**: `q = [tx, ty, tz, qw, qx, qy, qz, joint_angle_1, ...]`
+        bard.core.chain.Chain
 
     Raises:
-        ValueError: If a root link cannot be determined from the URDF structure.
+        FileNotFoundError: If the file does not exist.
+        ValueError: If a root link cannot be determined from the URDF.
     """
-    robot = URDF.from_xml_string(data)
+    path = os.fspath(path)
+    try:
+        with open(path, "rb") as f:
+            xml_str = f.read()
+    except FileNotFoundError as e:
+        raise FileNotFoundError(f"URDF file not found: {path}") from e
+
+    # --- Parse URDF and build chain (unchanged below) ---
+    robot = URDF.from_xml_string(xml_str)
     lmap = robot.link_map
     joints = robot.joints
-    n_joints = len(joints)
 
     # Find URDF root link (a parent that is never a child)
     is_child = {j.child for j in joints}
@@ -190,7 +195,6 @@ def build_chain_from_urdf(
         base_frame.children = [root_frame]
         root_frame = base_frame
 
-    # Create and return the final Chain object
     return chain.Chain(
         root_frame,
         floating_base=floating_base,

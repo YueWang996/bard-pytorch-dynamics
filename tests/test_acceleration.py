@@ -53,7 +53,7 @@ def compare_accelerations(a_bard, a_pin, dtype):
         )
 
 
-@pytest.mark.skipif(not hasattr(pin, "buildModelFromXML"), reason="Pinocchio not available")
+@pytest.mark.skipif(not hasattr(pin, "buildModelFromUrdf"), reason="Pinocchio not available")
 class TestSpatialAcceleration:
     """Test suite for Spatial Acceleration with both fixed-base and floating-base robots."""
 
@@ -62,17 +62,17 @@ class TestSpatialAcceleration:
     # ========================================================================
 
     @pytest.fixture(scope="class")
-    def pin_model_fixed(self, urdf_string):
+    def pin_model_fixed(self, urdf_path):
         """Builds Pinocchio model for fixed-base robot."""
-        model = pin.buildModelFromXML(urdf_string)
+        model = pin.buildModelFromUrdf(urdf_path)
         return model, model.createData()
 
     @pytest.mark.parametrize("reference_frame", ["world", "local"])
     def test_fixed_base_random_states(
-        self, urdf_string, pin_model_fixed, dtype, device, reference_frame
+        self, urdf_path, pin_model_fixed, dtype, device, reference_frame
     ):
         """Verifies acceleration at random states for fixed-base robot."""
-        bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
+        bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model_fixed
 
         # Create acceleration instance (without compilation)
@@ -83,7 +83,7 @@ class TestSpatialAcceleration:
 
         # Select test frame
         test_frame_name = bard_chain.get_frame_names(exclude_fixed=True)[-1]
-        bard_frame_idx = bard_chain.get_frame_indices(test_frame_name).item()
+        bard_frame_idx = bard_chain.get_frame_id(test_frame_name)
         pin_frame_id = pin_model_obj.getFrameId(test_frame_name)
 
         # Test multiple random states
@@ -111,9 +111,9 @@ class TestSpatialAcceleration:
 
             compare_accelerations(a_bard_np, a_pin, dtype)
 
-    def test_fixed_base_batched(self, urdf_string, pin_model_fixed, dtype, device):
+    def test_fixed_base_batched(self, urdf_path, pin_model_fixed, dtype, device):
         """Verifies batched acceleration computation for fixed-base robot."""
-        bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
+        bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model_fixed
         batch_size = 20
 
@@ -126,7 +126,7 @@ class TestSpatialAcceleration:
         qdd_batch = torch.randn(batch_size, bard_chain.n_joints, device=device, dtype=dtype)
 
         test_frame_name = bard_chain.get_frame_names(exclude_fixed=True)[-1]
-        bard_frame_idx = bard_chain.get_frame_indices(test_frame_name).item()
+        bard_frame_idx = bard_chain.get_frame_id(test_frame_name)
         pin_frame_id = pin_model_obj.getFrameId(test_frame_name)
 
         # Batched computation (world frame)
@@ -149,11 +149,9 @@ class TestSpatialAcceleration:
 
             compare_accelerations(a_bard_batch[i], a_pin, dtype)
 
-    def test_fixed_base_zero_velocity_acceleration(
-        self, urdf_string, pin_model_fixed, dtype, device
-    ):
+    def test_fixed_base_zero_velocity_acceleration(self, urdf_path, pin_model_fixed, dtype, device):
         """Verifies acceleration when velocities and accelerations are zero."""
-        bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
+        bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model_fixed
 
         accel = SpatialAcceleration(bard_chain, max_batch_size=1, compile_enabled=False)
@@ -164,7 +162,7 @@ class TestSpatialAcceleration:
         qdd = torch.zeros(1, bard_chain.n_joints, device=device, dtype=dtype)
 
         test_frame_name = bard_chain.get_frame_names(exclude_fixed=True)[-1]
-        frame_idx = bard_chain.get_frame_indices(test_frame_name).item()
+        frame_idx = bard_chain.get_frame_id(test_frame_name)
         pin_frame_id = pin_model_obj.getFrameId(test_frame_name)
 
         a_bard = accel.calc(q, qd, qdd, frame_idx, reference_frame="world")[0].cpu().numpy()
@@ -180,7 +178,7 @@ class TestSpatialAcceleration:
         assert np.allclose(a_bard, a_pin, atol=1e-10), "Zero velocity/acceleration case failed"
         assert np.allclose(a_bard, 0.0, atol=1e-10), "Acceleration should be near zero"
 
-    def test_fixed_base_with_compilation(self, urdf_string, pin_model_fixed, dtype, device):
+    def test_fixed_base_with_compilation(self, urdf_path, pin_model_fixed, dtype, device):
         """Verifies that acceleration works correctly with torch.compile enabled."""
         # Skip compilation tests for now due to torch.compile overflow issues
         pytest.skip("Placeholder test - compilation tests is to be implemented")
@@ -190,17 +188,17 @@ class TestSpatialAcceleration:
     # ========================================================================
 
     @pytest.fixture(scope="class")
-    def pin_model_floating(self, urdf_string):
+    def pin_model_floating(self, urdf_path):
         """Builds Pinocchio model for floating-base robot."""
-        model = pin.buildModelFromXML(urdf_string, pin.JointModelFreeFlyer())
+        model = pin.buildModelFromUrdf(urdf_path, pin.JointModelFreeFlyer())
         return model, model.createData()
 
     @pytest.mark.parametrize("reference_frame", ["world", "local"])
     def test_floating_base_random_states(
-        self, urdf_string, pin_model_floating, dtype, device, reference_frame
+        self, urdf_path, pin_model_floating, dtype, device, reference_frame
     ):
         """Verifies acceleration at random states for floating-base robot."""
-        bard_chain = build_chain_from_urdf(urdf_string, floating_base=True).to(
+        bard_chain = build_chain_from_urdf(urdf_path, floating_base=True).to(
             dtype=dtype, device=device
         )
         pin_model_obj, pin_data = pin_model_floating
@@ -212,7 +210,7 @@ class TestSpatialAcceleration:
         np.random.seed(2048)
 
         test_frame_name = bard_chain.get_frame_names(exclude_fixed=True)[-1]
-        bard_frame_idx = bard_chain.get_frame_indices(test_frame_name).item()
+        bard_frame_idx = bard_chain.get_frame_id(test_frame_name)
         pin_frame_id = pin_model_obj.getFrameId(test_frame_name)
 
         # Test multiple random states
@@ -260,9 +258,9 @@ class TestSpatialAcceleration:
 
             compare_accelerations(a_bard_np, a_pin, dtype)
 
-    def test_floating_base_batched(self, urdf_string, pin_model_floating, dtype, device):
+    def test_floating_base_batched(self, urdf_path, pin_model_floating, dtype, device):
         """Verifies batched acceleration computation for floating-base robot."""
-        bard_chain = build_chain_from_urdf(urdf_string, floating_base=True).to(
+        bard_chain = build_chain_from_urdf(urdf_path, floating_base=True).to(
             dtype=dtype, device=device
         )
         pin_model_obj, pin_data = pin_model_floating
@@ -289,7 +287,7 @@ class TestSpatialAcceleration:
         qdd_batch = torch.cat([a_base, qdd_joints], dim=1)
 
         test_frame_name = bard_chain.get_frame_names(exclude_fixed=True)[-1]
-        bard_frame_idx = bard_chain.get_frame_indices(test_frame_name).item()
+        bard_frame_idx = bard_chain.get_frame_id(test_frame_name)
         pin_frame_id = pin_model_obj.getFrameId(test_frame_name)
 
         # Batched computation
@@ -319,9 +317,9 @@ class TestSpatialAcceleration:
 
             compare_accelerations(a_bard_batch[i], a_pin, dtype)
 
-    def test_floating_base_stationary(self, urdf_string, pin_model_floating, dtype, device):
+    def test_floating_base_stationary(self, urdf_path, pin_model_floating, dtype, device):
         """Verifies acceleration when floating base is stationary at identity pose."""
-        bard_chain = build_chain_from_urdf(urdf_string, floating_base=True).to(
+        bard_chain = build_chain_from_urdf(urdf_path, floating_base=True).to(
             dtype=dtype, device=device
         )
         pin_model_obj, pin_data = pin_model_floating
@@ -338,7 +336,7 @@ class TestSpatialAcceleration:
         qdd = torch.zeros(1, 6 + bard_chain.n_joints, device=device, dtype=dtype)
 
         test_frame_name = bard_chain.get_frame_names(exclude_fixed=True)[-1]
-        frame_idx = bard_chain.get_frame_indices(test_frame_name).item()
+        frame_idx = bard_chain.get_frame_id(test_frame_name)
         pin_frame_id = pin_model_obj.getFrameId(test_frame_name)
 
         a_bard = accel.calc(q, qd, qdd, frame_idx, reference_frame="world")[0].cpu().numpy()
@@ -362,7 +360,7 @@ class TestSpatialAcceleration:
         compare_accelerations(a_bard, a_pin, dtype)
         assert np.allclose(a_bard, 0.0, atol=1e-10), "Stationary acceleration should be near zero"
 
-    def test_floating_base_with_compilation(self, urdf_string, pin_model_floating, dtype, device):
+    def test_floating_base_with_compilation(self, urdf_path, pin_model_floating, dtype, device):
         """Verifies that floating-base acceleration works correctly with torch.compile enabled."""
         # Skip compilation tests for now
         pytest.skip("Placeholder test - compilation tests is to be implemented")
@@ -371,20 +369,20 @@ class TestSpatialAcceleration:
     # Edge Cases and Stress Tests
     # ========================================================================
 
-    def test_batch_size_validation(self, urdf_string, dtype, device):
+    def test_batch_size_validation(self, urdf_path, dtype, device):
         """Verifies that exceeding max_batch_size raises appropriate error."""
-        bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
+        bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
 
         accel = SpatialAcceleration(bard_chain, max_batch_size=5, compile_enabled=False)
 
         frame_name = bard_chain.get_frame_names(exclude_fixed=True)[-1]
-        frame_idx = bard_chain.get_frame_indices(frame_name).item()
+        frame_idx = bard_chain.get_frame_id(frame_name)
 
         # This should work (batch_size = 5, max = 5)
         q_ok = torch.rand(5, bard_chain.n_joints, device=device, dtype=dtype)
         qd_ok = torch.randn(5, bard_chain.n_joints, device=device, dtype=dtype)
         qdd_ok = torch.randn(5, bard_chain.n_joints, device=device, dtype=dtype)
-        result = accel.calc(q_ok, qd_ok, qdd_ok, frame_idx)
+        result = accel.calc(q_ok, qd_ok, qdd_ok, frame_idx, reference_frame="world")
         assert result.shape[0] == 5, "Should process 5 samples"
 
         # This should raise ValueError (batch_size = 10, max = 5)
@@ -392,11 +390,13 @@ class TestSpatialAcceleration:
         qd_too_large = torch.randn(10, bard_chain.n_joints, device=device, dtype=dtype)
         qdd_too_large = torch.randn(10, bard_chain.n_joints, device=device, dtype=dtype)
         with pytest.raises(ValueError, match="exceeds max_batch_size"):
-            _ = accel.calc(q_too_large, qd_too_large, qdd_too_large, frame_idx)
+            _ = accel.calc(
+                q_too_large, qd_too_large, qdd_too_large, frame_idx, reference_frame="world"
+            )
 
-    def test_world_vs_local_frame_consistency(self, urdf_string, dtype, device):
+    def test_world_vs_local_frame_consistency(self, urdf_path, dtype, device):
         """Verifies relationship between world and local frame accelerations."""
-        bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
+        bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
 
         accel = SpatialAcceleration(bard_chain, max_batch_size=1, compile_enabled=False)
 
@@ -406,7 +406,7 @@ class TestSpatialAcceleration:
         qdd = torch.randn(1, bard_chain.n_joints, device=device, dtype=dtype)
 
         frame_name = bard_chain.get_frame_names(exclude_fixed=True)[-1]
-        frame_idx = bard_chain.get_frame_indices(frame_name).item()
+        frame_idx = bard_chain.get_frame_id(frame_name)
 
         # Compute in both frames
         a_world = accel.calc(q, qd, qdd, frame_idx, reference_frame="world")

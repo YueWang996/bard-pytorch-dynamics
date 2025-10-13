@@ -55,7 +55,7 @@ def compare_transforms_fk(T_ours, T_pin, dtype):
         warnings.warn(f"Rotation error {rot_err:.3e} close to tolerance {rot_warn_tol:.1e}")
 
 
-@pytest.mark.skipif(not hasattr(pin, "buildModelFromXML"), reason="Pinocchio not available")
+@pytest.mark.skipif(not hasattr(pin, "buildModelFromUrdf"), reason="Pinocchio not available")
 class TestForwardKinematics:
     """Test suite for Forward Kinematics with both fixed-base and floating-base robots."""
 
@@ -64,14 +64,14 @@ class TestForwardKinematics:
     # ========================================================================
 
     @pytest.fixture(scope="class")
-    def pin_model_fixed(self, urdf_string):
+    def pin_model_fixed(self, urdf_path):
         """Builds Pinocchio model for fixed-base robot."""
-        model = pin.buildModelFromXML(urdf_string)
+        model = pin.buildModelFromUrdf(urdf_path)
         return model, model.createData()
 
-    def test_fixed_base_zero_config(self, urdf_string, pin_model_fixed, dtype, device):
+    def test_fixed_base_zero_config(self, urdf_path, pin_model_fixed, dtype, device):
         """Verifies FK at zero configuration for fixed-base robot."""
-        bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
+        bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model_fixed
 
         # Create FK instance (without compilation)
@@ -85,7 +85,7 @@ class TestForwardKinematics:
 
         # Test end-effector frame
         test_frame_name = bard_chain.get_frame_names(exclude_fixed=True)[-1]
-        frame_idx = bard_chain.get_frame_indices(test_frame_name).item()
+        frame_idx = bard_chain.get_frame_id(test_frame_name)
 
         # Bard FK returns raw tensor, wrap in Transform3d for consistency
         T_bard_matrix = fk.calc(q_bard, frame_idx)[0].cpu().numpy()
@@ -95,9 +95,9 @@ class TestForwardKinematics:
 
         compare_transforms_fk(T_bard_matrix, T_pin, dtype)
 
-    def test_fixed_base_random_configs_batched(self, urdf_string, pin_model_fixed, dtype, device):
+    def test_fixed_base_random_configs_batched(self, urdf_path, pin_model_fixed, dtype, device):
         """Verifies batched FK at random configurations for fixed-base robot."""
-        bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
+        bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model_fixed
         batch_size = 20
 
@@ -111,7 +111,7 @@ class TestForwardKinematics:
         )
 
         test_frame_name = bard_chain.get_frame_names(exclude_fixed=True)[-1]
-        bard_frame_idx = bard_chain.get_frame_indices(test_frame_name).item()
+        bard_frame_idx = bard_chain.get_frame_id(test_frame_name)
         pin_frame_id = pin_model_obj.getFrameId(test_frame_name)
 
         # Batched FK computation
@@ -126,7 +126,7 @@ class TestForwardKinematics:
 
             compare_transforms_fk(T_bard_batch[i], T_pin, dtype)
 
-    def test_fixed_base_with_compilation(self, urdf_string, pin_model_fixed, dtype, device):
+    def test_fixed_base_with_compilation(self, urdf_path, pin_model_fixed, dtype, device):
         """Verifies that FK works correctly with torch.compile enabled."""
         pytest.skip("Placeholder test - compilation tests is to be implemented")
 
@@ -135,16 +135,16 @@ class TestForwardKinematics:
     # ========================================================================
 
     @pytest.fixture(scope="class")
-    def pin_model_floating(self, urdf_string):
+    def pin_model_floating(self, urdf_path):
         """Builds Pinocchio model for floating-base robot."""
-        model = pin.buildModelFromXML(urdf_string, pin.JointModelFreeFlyer())
+        model = pin.buildModelFromUrdf(urdf_path, pin.JointModelFreeFlyer())
         return model, model.createData()
 
     def test_floating_base_random_configs_batched(
-        self, urdf_string, pin_model_floating, dtype, device
+        self, urdf_path, pin_model_floating, dtype, device
     ):
         """Verifies batched FK with random base poses and joint configurations."""
-        bard_chain = build_chain_from_urdf(urdf_string, floating_base=True).to(
+        bard_chain = build_chain_from_urdf(urdf_path, floating_base=True).to(
             dtype=dtype, device=device
         )
         pin_model_obj, pin_data = pin_model_floating
@@ -167,7 +167,7 @@ class TestForwardKinematics:
         q_bard_batch = torch.cat([translations, quats_wxyz, q_joints], dim=1)
 
         test_frame_name = bard_chain.get_frame_names(exclude_fixed=True)[-1]
-        bard_frame_idx = bard_chain.get_frame_indices(test_frame_name).item()
+        bard_frame_idx = bard_chain.get_frame_id(test_frame_name)
         pin_frame_id = pin_model_obj.getFrameId(test_frame_name)
 
         # Batched FK computation
@@ -191,9 +191,9 @@ class TestForwardKinematics:
 
             compare_transforms_fk(T_bard_batch[i], T_pin, dtype)
 
-    def test_floating_base_identity_base_pose(self, urdf_string, pin_model_floating, dtype, device):
+    def test_floating_base_identity_base_pose(self, urdf_path, pin_model_floating, dtype, device):
         """Verifies FK with identity base pose (should match fixed-base at same joint config)."""
-        bard_chain = build_chain_from_urdf(urdf_string, floating_base=True).to(
+        bard_chain = build_chain_from_urdf(urdf_path, floating_base=True).to(
             dtype=dtype, device=device
         )
         pin_model_obj, pin_data = pin_model_floating
@@ -215,7 +215,7 @@ class TestForwardKinematics:
         q_bard = torch.cat([translations, quats_wxyz, q_joints], dim=1)
 
         test_frame_name = bard_chain.get_frame_names(exclude_fixed=True)[-1]
-        frame_idx = bard_chain.get_frame_indices(test_frame_name).item()
+        frame_idx = bard_chain.get_frame_id(test_frame_name)
         pin_frame_id = pin_model_obj.getFrameId(test_frame_name)
 
         T_bard_batch = fk.calc(q_bard, frame_idx).cpu().numpy()
@@ -236,7 +236,7 @@ class TestForwardKinematics:
 
             compare_transforms_fk(T_bard_batch[i], T_pin, dtype)
 
-    def test_floating_base_with_compilation(self, urdf_string, pin_model_floating, dtype, device):
+    def test_floating_base_with_compilation(self, urdf_path, pin_model_floating, dtype, device):
         """Verifies that floating-base FK works correctly with torch.compile enabled."""
         # Skip compilation tests for now due to torch.compile overflow issues
         pytest.skip("Placeholder test - compilation tests is to be implemented")
@@ -245,9 +245,9 @@ class TestForwardKinematics:
     # Edge Cases and Stress Tests
     # ========================================================================
 
-    def test_fixed_base_single_vs_batch(self, urdf_string, dtype, device):
+    def test_fixed_base_single_vs_batch(self, urdf_path, dtype, device):
         """Verifies that single and batched queries produce consistent results."""
-        bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
+        bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
 
         fk_single = ForwardKinematics(bard_chain, max_batch_size=1, compile_enabled=False)
         fk_batch = ForwardKinematics(bard_chain, max_batch_size=10, compile_enabled=False)
@@ -257,7 +257,7 @@ class TestForwardKinematics:
         q_batch = q_single.expand(10, -1).contiguous()
 
         frame_name = bard_chain.get_frame_names(exclude_fixed=True)[-1]
-        frame_idx = bard_chain.get_frame_indices(frame_name).item()
+        frame_idx = bard_chain.get_frame_id(frame_name)
 
         T_single = fk_single.calc(q_single, frame_idx)
         T_batch = fk_batch.calc(q_batch, frame_idx)
@@ -269,14 +269,14 @@ class TestForwardKinematics:
                 T_single[0], T_batch[i], atol=tol
             ), f"Batch result {i} differs from single result"
 
-    def test_batch_size_validation(self, urdf_string, dtype, device):
+    def test_batch_size_validation(self, urdf_path, dtype, device):
         """Verifies that exceeding max_batch_size raises appropriate error."""
-        bard_chain = build_chain_from_urdf(urdf_string).to(dtype=dtype, device=device)
+        bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
 
         fk = ForwardKinematics(bard_chain, max_batch_size=5, compile_enabled=False)
 
         frame_name = bard_chain.get_frame_names(exclude_fixed=True)[-1]
-        frame_idx = bard_chain.get_frame_indices(frame_name).item()
+        frame_idx = bard_chain.get_frame_id(frame_name)
 
         # This should work (batch_size = 5, max = 5)
         q_ok = torch.rand(5, bard_chain.n_joints, device=device, dtype=dtype)

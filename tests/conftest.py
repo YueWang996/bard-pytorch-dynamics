@@ -29,14 +29,13 @@ pytestmark = pytest.mark.skipif(not HAS_PINOCCHIO, reason="Pinocchio library not
 
 
 @pytest.fixture(scope="session")
-def urdf_string():
-    """Provides the URDF content as a string from the fixtures directory."""
+def urdf_path():
+    """Provides the URDF file path from the fixtures directory."""
     script_dir = Path(__file__).parent
     urdf_path = script_dir / "go2_description/urdf/go2.urdf"
     if not os.path.exists(urdf_path):
         pytest.skip(f"Required test asset not found: {urdf_path}")
-    with open(urdf_path, "rb") as f:
-        return f.read()
+    return urdf_path
 
 
 @pytest.fixture(params=[torch.float32, torch.float64], ids=["float32", "float64"])

@@ -12,14 +12,7 @@ def main():
     An example of computing the Jacobian for a batch of configurations.
     """
     # Load a robot from a URDF file
-    try:
-        with open(urdf_path, "rb") as f:
-            urdf_string = f.read()
-    except FileNotFoundError:
-        print(f"Error: {urdf_path} not found. Please provide a valid path.")
-        return
-
-    chain = build_chain_from_urdf(urdf_string).to(dtype=torch.float32, device="cpu")
+    chain = build_chain_from_urdf(urdf_path).to(dtype=torch.float32, device="cpu")
 
     # Instantiate the Jacobian class once, specifying the max batch size
     batch_size = 1000
@@ -30,7 +23,7 @@ def main():
 
     # 2. Select the end-effector frame
     ee_frame_name = chain.get_frame_names(exclude_fixed=True)[-1]
-    ee_frame_idx = chain.get_frame_indices(ee_frame_name).item()
+    ee_frame_idx = chain.get_frame_id(ee_frame_name)
     print(
         f"Calculating Jacobian for frame '{ee_frame_name}' with a batch of {batch_size} configurations."
     )
