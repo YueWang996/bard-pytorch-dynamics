@@ -99,7 +99,7 @@ If you initially installed the CPU-only version and want to switch to the CUDA v
 
 ### Building the Documentation
 
-The documentation is available [here](https://yuewang996.github.io/bard/). If you need to build the documentation locally, follow these steps.
+The documentation is available [here](https://yuewang996.github.io/bard-pytorch-dynamics/). If you need to build the documentation locally, follow these steps.
 
 1.  **Install documentation dependencies** from the project's root directory:
     ```bash
