@@ -42,7 +42,7 @@ classifiers = [
 dependencies = [
     "numpy>=1.26.0",
     "pyyaml>=6.0",
-    "lxml>=6.0",
+    "lxml>=5.0.0",
 ]
 
 [project.optional-dependencies]
