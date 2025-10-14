@@ -9,19 +9,38 @@
 
 The primary motivation behind `bard` is to provide a dynamics library that integrates seamlessly into modern machine learning workflows. By treating the robot's state and dynamics as a differentiable computation graph, it becomes an ideal tool for robotics research in areas like reinforcement learning, trajectory optimization, physics-informed learning, and system identification.
 
-## Key Features ✨
+## Feature Comparison ✨
 
-  * **PyTorch Native**: Built entirely on PyTorch for seamless integration with ML pipelines.
-  * **Batch Processing**: All core functions operate on batches of robot states, enabling massive parallelism.
-  * **GPU Acceleration**: Run dynamics computations on NVIDIA GPUs for significant speedups.
-  * **Differentiable**: The entire computation graph is differentiable, allowing for gradient-based optimization through the robot's dynamics.
-  * **Comprehensive Algorithms**:
-      * Forward Kinematics
-      * Jacobian Calculation (in world and body frames)
-      * Inverse Dynamics (using RNEA)
-      * Mass Matrix / Inertia Matrix (using CRBA)
-  * **Floating-Base Support**: Natively handles both fixed-base manipulators and floating-base systems like humanoids or quadrupeds.
-  * **URDF Parsing**: Load robot models directly from URDF files.
+`bard` combines the best of both worlds: native PyTorch integration for ML workflows and comprehensive robotics algorithms. Here's how it compares to other state-of-the-art libraries:
+
+
+| Feature | bard (Ours) | Pinocchio | RBDL | pytorch_kinematics |
+|---------|:------:|:-----------:|:------:|:-------------------:|
+| **PyTorch Native** | ✅ | ❌ | ❌ | ✅ |
+| **Batch Processing** | ✅ | ❌ | ❌ | ✅ |
+| **GPU Acceleration** | ✅ | ❌ | ❌ | ✅ |
+| **Auto-Differentiation (Autograd)** | ✅ | ❌ | ❌ | ✅ |
+| **Floating-Base Support** | ✅ | ✅ | ✅ | ❌ |
+| **Forward Kinematics** | ✅ | ✅ | ✅ | ✅ |
+| **Inverse Kinematics** | 🔜 | ✅ | ✅ | ✅ |
+| **Jacobian Calculation** | ✅ | ✅ | ✅ | ✅ |
+| **Inverse Dynamics (RNEA)** | ✅ | ✅ | ✅ | ❌ |
+| **Forward Dynamics (ABA)** | ❌ | ✅ | ✅ | ❌ |
+| **Mass Matrix (CRBA)** | ✅ | ✅ | ✅ | ❌ |
+| **URDF Parsing** | ✅ | ✅ | ✅ | ✅ |
+
+
+**Key Advantages of bard:**
+- Seamlessly integrates with PyTorch-based ML pipelines
+- Efficient batched operations for training neural networks with thousands of parallel simulations
+- Full differentiability through robot dynamics for gradient-based optimization
+- Native GPU support without requiring C++/CUDA compilation
+
+## Benchmarks 🚀
+
+`bard` is designed for high performance, especially when processing large batches of robot states on GPU. The benchmark below compares the computational speed of `bard` against Pinocchio for common robotics operations on a Unitree Go2 robot model. All `bard` computations were executed on an NVIDIA H200 GPU, while Pinocchio benchmarks include both its native C++ implementation (CPU) and PyTorch wrapper (GPU CUDA).
+
+![Performance Benchmark](./benchmark.png)
 
 ## Installation
 
@@ -84,7 +103,7 @@ The documentation is available [here](https://yuewang996.github.io/bard/). If yo
 
 1.  **Install documentation dependencies** from the project's root directory:
     ```bash
-    pip install -e .[docs]
+    pip install -e ".[docs]"
     ```
 2.  **Navigate to the `docs` folder and run the build command**:
     ```bash
@@ -102,7 +121,7 @@ The library is rigorously tested against `pinocchio` to ensure numerical accurac
 conda install -c conda-forge pinocchio
 
 # From the project root directory, install dev dependencies
-pip install -e .[dev]
+pip install -e ".[dev]"
 
 # Run the test suite
 pytest
