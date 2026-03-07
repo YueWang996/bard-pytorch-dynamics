@@ -9,7 +9,7 @@ import torch
 import pinocchio as pin
 from tabulate import tabulate
 
-from bard import build_chain_from_urdf, RobotDynamics
+import bard
 from benchconf import (
     URDF_PATH,
     BATCH_SIZES,
@@ -27,16 +27,16 @@ from benchconf import (
 
 
 def load_robot():
-    chain = build_chain_from_urdf(URDF_PATH, floating_base=True).to(dtype=DTYPE, device=DEVICE)
+    model = bard.build_model_from_urdf(URDF_PATH, floating_base=True).to(dtype=DTYPE, device=DEVICE)
     pin_model, pin_data = build_pin_model(URDF_PATH)
-    return chain, pin_model, pin_data
+    return model, pin_model, pin_data
 
 
-def generate_random_state(chain, B):
-    q = torch.randn(B, chain.nq, device=DEVICE, dtype=DTYPE)
+def generate_random_state(model, B):
+    q = torch.randn(B, model.nq, device=DEVICE, dtype=DTYPE)
     q[:, 3:7] = q[:, 3:7] / torch.linalg.norm(q[:, 3:7], dim=1, keepdim=True)
-    qd = torch.randn(B, chain.nv, device=DEVICE, dtype=DTYPE)
-    qdd = torch.randn(B, chain.nv, device=DEVICE, dtype=DTYPE)
+    qd = torch.randn(B, model.nv, device=DEVICE, dtype=DTYPE)
+    qdd = torch.randn(B, model.nv, device=DEVICE, dtype=DTYPE)
     q_pin = []
     for i in range(B):
         qi = q[i].detach().cpu().numpy()
@@ -49,10 +49,10 @@ def generate_random_state(chain, B):
 # ------------------------------
 
 
-def bench_bard(rd, q, qd, qdd, nrep, nwarm):
+def bench_bard(model, data, q, qd, qdd, nrep, nwarm):
     for _ in range(nwarm):
-        state = rd.update_kinematics(q, qd)
-        _ = rd.rnea(qdd, state)
+        bard.update_kinematics(model, data, q, qd)
+        _ = bard.rnea(model, data, qdd)
     if DEVICE == "cuda":
         torch.cuda.synchronize()
     ts = []
@@ -60,8 +60,8 @@ def bench_bard(rd, q, qd, qdd, nrep, nwarm):
         if DEVICE == "cuda":
             torch.cuda.synchronize()
         t0 = time.perf_counter()
-        state = rd.update_kinematics(q, qd)
-        _ = rd.rnea(qdd, state)
+        bard.update_kinematics(model, data, q, qd)
+        _ = bard.rnea(model, data, qdd)
         if DEVICE == "cuda":
             torch.cuda.synchronize()
         ts.append(time.perf_counter() - t0)
@@ -106,9 +106,9 @@ def bench_pin_torch(wrapper, q, qd, qdd, nrep, nwarm):
 # ------------------------------
 
 
-def verify_short(rd, q, qd, qdd, pin_model, pin_data, q_pin):
-    state = rd.update_kinematics(q[:1], qd[:1])
-    tau_bard = rd.rnea(qdd[:1], state)[0].detach().cpu().numpy()
+def verify_short(model, data, q, qd, qdd, pin_model, pin_data, q_pin):
+    bard.update_kinematics(model, data, q[:1], qd[:1])
+    tau_bard = bard.rnea(model, data, qdd[:1])[0].detach().cpu().numpy()
     qd0 = qd[:1].detach().cpu().numpy()[0]
     qdd0 = qdd[:1].detach().cpu().numpy()[0]
     tau_pin = pin.rnea(pin_model, pin_data, q_pin[0], qd0, qdd0)
@@ -129,25 +129,25 @@ def verify_short(rd, q, qd, qdd, pin_model, pin_data, q_pin):
 
 
 def main():
-    print("Benchmarking RobotDynamics.rnea()")
+    print("Benchmarking bard.rnea()")
     print("device={} dtype={}".format(DEVICE, DTYPE))
-    chain, pin_model, pin_data = load_robot()
+    model, pin_model, pin_data = load_robot()
     max_batch = max(BATCH_SIZES)
-    rd = RobotDynamics(chain, max_batch_size=max_batch, compile_enabled=(DEVICE == "cuda")).to(
-        dtype=DTYPE, device=DEVICE
-    )
-    print("rnea nv={}".format(chain.nv))
+    if DEVICE == "cuda":
+        model.enable_compilation(True)
+    data = bard.create_data(model, max_batch_size=max_batch)
+    print("rnea nv={}".format(model.nv))
 
     rows = []
     for B in BATCH_SIZES:
-        q, qd, qdd, q_pin = generate_random_state(chain, B)
+        q, qd, qdd, q_pin = generate_random_state(model, B)
         if B == BATCH_SIZES[0]:
-            verify_short(rd, q, qd, qdd, pin_model, pin_data, q_pin)
+            verify_short(model, data, q, qd, qdd, pin_model, pin_data, q_pin)
 
         wrapper = PinocchioTorchWrapper(pin_model, device=DEVICE, dtype=DTYPE)
 
         print("running batch_size={}...".format(B), end="", flush=True)
-        t_bard = bench_bard(rd, q, qd, qdd, NUM_REPEATS, WARMUP_ITERS)
+        t_bard = bench_bard(model, data, q, qd, qdd, NUM_REPEATS, WARMUP_ITERS)
         print(" bard finished({:.2f}ms). ".format(np.mean(t_bard) * 1000.0), end="", flush=True)
         t_pin = bench_pin(pin_model, pin_data, q_pin, qd, qdd, NUM_REPEATS, WARMUP_ITERS)
         print(" pinocchio finished({:.2f}ms). ".format(np.mean(t_pin) * 1000.0), end="", flush=True)

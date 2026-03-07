@@ -40,28 +40,28 @@ The primary motivation behind `bard` is to provide a dynamics library that integ
 
 ### Basic Usage (Cached Workflow)
 
-The `RobotDynamics` class is the primary API. It computes shared kinematic quantities once via `update_kinematics()` and reuses them across all subsequent algorithm calls, eliminating redundant computation.
+`bard` follows a **model + data** pattern inspired by Pinocchio and MuJoCo. Build a model once, create a data workspace, then call top-level functions for all computations. A single `update_kinematics()` call caches shared quantities, eliminating redundant tree traversals.
 
 ```python
 import torch
 import bard
 
-# Load robot and create dynamics interface
-chain = bard.build_chain_from_urdf("robot.urdf", floating_base=True)
-chain.to(dtype=torch.float32, device="cuda")
-rd = bard.RobotDynamics(chain, max_batch_size=4096)
+# Build model and create data workspace
+model = bard.build_model_from_urdf("robot.urdf", floating_base=True)
+model.to(dtype=torch.float32, device="cuda")
+data = bard.create_data(model, max_batch_size=4096)
 
-eef_id = chain.get_frame_id("end_effector_link")
+eef_id = model.get_frame_id("end_effector_link")
 
 # In your control / RL training loop:
 # 1. Single tree traversal — caches everything
-state = rd.update_kinematics(q, qd)
+bard.update_kinematics(model, data, q, qd)
 
-# 2. All algorithms reuse cached state (no redundant computation)
-T_eef = rd.forward_kinematics(eef_id, state)            # O(1) lookup
-J     = rd.jacobian(eef_id, state, reference_frame="world")
-tau   = rd.rnea(qdd, state, gravity=gravity)
-M     = rd.crba(state)
+# 2. All algorithms reuse cached data (no redundant computation)
+T_eef = bard.forward_kinematics(model, data, eef_id)          # O(1) lookup
+J     = bard.jacobian(model, data, eef_id, reference_frame="world")
+tau   = bard.rnea(model, data, qdd, gravity=gravity)
+M     = bard.crba(model, data)
 ```
 
 ### Standalone FK (No Cache Needed)
@@ -69,7 +69,7 @@ M     = rd.crba(state)
 For single-frame queries without needing a full tree traversal:
 
 ```python
-T = rd.fk(q, frame_id)  # Path-only traversal
+T = bard.forward_kinematics(model, data, frame_id, q=q)  # Path-only traversal
 ```
 
 ## Benchmarks 🚀

@@ -582,7 +582,7 @@ class Robot(xmlr.Object):
             chain.append(tip)
         link = tip
         while link != root:
-            (joint, parent) = self.parent_map[link]
+            joint, parent = self.parent_map[link]
             if joints:
                 if fixed or self.joint_map[joint].joint_type != "fixed":
                     chain.append(joint)

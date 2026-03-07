@@ -1,10 +1,9 @@
 """
-URDF parser for building a `bard` kinematic Chain.
+URDF parser for building a bard Model from URDF files.
 
-This module provides the `build_chain_from_urdf` function, which serves as the
-primary entry point for creating a robot model from a URDF file's content. It
-handles parsing of links, joints, and inertial properties, and supports the
-creation of both fixed-base and floating-base robot representations.
+This module provides :func:`build_model_from_urdf`, the primary entry point for
+creating a robot model. It handles parsing of links, joints, and inertial
+properties, and supports both fixed-base and floating-base robots.
 """
 
 import os
@@ -14,9 +13,9 @@ from typing import Union
 from .urdf_parser_py.urdf import URDF, Mesh, Cylinder, Box, Sphere
 from bard.structures import Frame, Joint, Link, Visual
 from bard.core import chain
+from bard.core.model import Model
 import torch
 import bard.transforms as tf
-
 
 JOINT_TYPE_MAP = {
     "revolute": "revolute",
@@ -201,4 +200,44 @@ def build_chain_from_urdf(
         base_name=base_frame_name,
         dtype=dtype,
         device=device,
+    )
+
+
+def build_model_from_urdf(
+    path: Union[str, os.PathLike],
+    *,
+    floating_base: bool = False,
+    base_frame_name: str = "floating_base",
+    dtype=torch.float32,
+    device="cpu",
+    compile_enabled: bool = False,
+    compile_kwargs=None,
+) -> Model:
+    """Builds a bard :class:`Model` from a URDF file.
+
+    This is the primary entry point for creating a robot model.
+
+    Args:
+        path: Filesystem path to the URDF file.
+        floating_base: If True, a 6-DOF floating base is prepended.
+        base_frame_name: Name for the synthetic base frame.
+        dtype: PyTorch dtype for the model's tensors.
+        device: PyTorch device for the model's tensors.
+        compile_enabled: If True, JIT-compile internal methods.
+        compile_kwargs: Additional kwargs for ``torch.compile``.
+
+    Returns:
+        A :class:`Model` instance.
+    """
+    c = build_chain_from_urdf(
+        path,
+        floating_base=floating_base,
+        base_frame_name=base_frame_name,
+        dtype=dtype,
+        device=device,
+    )
+    return Model(
+        c,
+        compile_enabled=compile_enabled,
+        compile_kwargs=compile_kwargs,
     )

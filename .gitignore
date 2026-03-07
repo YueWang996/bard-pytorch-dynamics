@@ -1,4 +1,5 @@
 /.pytest_cache
+/.vscode/
 
 __pycache__/
 **/__pycache__/
@@ -17,3 +18,4 @@ __pycache__/
 *.egg-info
 
 /benchmarks/bench_logs
+/docs/build

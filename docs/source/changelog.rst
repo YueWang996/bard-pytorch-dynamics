@@ -4,21 +4,28 @@ Changelog
 v0.3
 ----
 
-**Unified RobotDynamics API**
+**Unified Model/Data API**
 
-* Added ``RobotDynamics`` class as the primary interface for all kinematics and
-  dynamics computations. A single ``update_kinematics()`` call computes shared
-  quantities (transforms, spatial adjoints, joint subspace, velocities) once,
-  eliminating redundant tree traversals when multiple algorithms are used in
-  the same control step.
+* Introduced ``Model`` and ``Data`` classes following the Pinocchio/MuJoCo
+  pattern. All computations are now accessed through top-level free functions
+  (``bard.forward_kinematics()``, ``bard.jacobian()``, ``bard.rnea()``, etc.)
+  operating on a ``model`` + ``data`` pair.
 
-* Added ``KinematicsState`` dataclass for holding cached kinematic quantities.
+* Added ``bard.build_model_from_urdf()`` as the primary entry point for loading
+  robots. Returns a ``Model`` object that holds the robot's topology, inertias,
+  and joint parameters.
 
-* Deprecated ``ForwardKinematics``, ``SpatialAcceleration``, ``Jacobian``,
-  ``RNEA``, and ``CRBA`` classes. These are retained as thin wrappers around
-  ``RobotDynamics`` for backward compatibility.
+* Added ``bard.create_data()`` for creating pre-allocated computation workspaces.
+  One ``Model`` can be used with multiple ``Data`` instances.
 
-* Removed Inverse Kinematics from the roadmap.
+* ``bard.update_kinematics(model, data, q, qd)`` performs a single tree traversal,
+  caching transforms, spatial adjoints, and velocities. All subsequent algorithm
+  calls reuse the cached data with zero redundant computation.
+
+* **Breaking change:** Removed ``RobotDynamics``, ``KinematicsState``,
+  ``ForwardKinematics``, ``SpatialAcceleration``, ``Jacobian``, ``RNEA``,
+  and ``CRBA`` classes. The ``build_chain_from_urdf()`` function is no longer
+  part of the public API. See the Quick Start guide for migration examples.
 
 v0.2
 ----

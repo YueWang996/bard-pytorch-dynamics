@@ -8,7 +8,6 @@ from bard.transforms import axis_and_angle_to_matrix_33
 from .joint import Joint
 from .link import Link
 
-
 # Tree drawing characters
 SPACE = "    "
 BRANCH = "│   "

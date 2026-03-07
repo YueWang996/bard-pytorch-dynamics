@@ -15,7 +15,7 @@ import torch
 import pinocchio as pin
 from tabulate import tabulate
 
-from bard import build_chain_from_urdf, RobotDynamics
+import bard
 from benchconf import (
     URDF_PATH,
     BATCH_SIZES,
@@ -35,20 +35,20 @@ from benchconf import (
 
 def load_robot():
     # Bard
-    chain = build_chain_from_urdf(URDF_PATH, floating_base=True).to(dtype=DTYPE, device=DEVICE)
+    model = bard.build_model_from_urdf(URDF_PATH, floating_base=True).to(dtype=DTYPE, device=DEVICE)
 
     # Pinocchio
     pin_model, pin_data = build_pin_model(URDF_PATH)
-    return chain, pin_model, pin_data
+    return model, pin_model, pin_data
 
 
-def generate_random_configuration(chain, batch_size):
+def generate_random_configuration(model, batch_size):
     # Bard / torch
-    q = torch.randn(batch_size, chain.nq, device=DEVICE, dtype=DTYPE)
+    q = torch.randn(batch_size, model.nq, device=DEVICE, dtype=DTYPE)
     # normalize base quaternion (assumes q = [xyz, qw qx qy qz, joints...] or similar Bard layout)
     q[:, 3:7] = q[:, 3:7] / torch.linalg.norm(q[:, 3:7], dim=1, keepdim=True)
-    qd = torch.randn(batch_size, chain.nv, device=DEVICE, dtype=DTYPE)
-    qdd = torch.randn(batch_size, chain.nv, device=DEVICE, dtype=DTYPE)
+    qd = torch.randn(batch_size, model.nv, device=DEVICE, dtype=DTYPE)
+    qdd = torch.randn(batch_size, model.nv, device=DEVICE, dtype=DTYPE)
 
     # Pinocchio expects quaternion as [qx, qy, qz, qw]; convert per sample
     q_pin, qd_pin, qdd_pin = [], [], []
@@ -68,10 +68,10 @@ def generate_random_configuration(chain, batch_size):
 # ------------------------------
 
 
-def bench_bard(rd, q, qd, qdd, frame_id, ref_frame, nrep, nwarm):
+def bench_bard(model, data, q, qd, qdd, frame_id, ref_frame, nrep, nwarm):
     for _ in range(nwarm):
-        state = rd.update_kinematics(q, qd)
-        _ = rd.spatial_acceleration(qdd, frame_id, state, reference_frame=ref_frame)
+        bard.update_kinematics(model, data, q, qd)
+        _ = bard.spatial_acceleration(model, data, qdd, frame_id, reference_frame=ref_frame)
     if DEVICE == "cuda":
         torch.cuda.synchronize()
 
@@ -80,8 +80,8 @@ def bench_bard(rd, q, qd, qdd, frame_id, ref_frame, nrep, nwarm):
         if DEVICE == "cuda":
             torch.cuda.synchronize()
         t0 = time.perf_counter()
-        state = rd.update_kinematics(q, qd)
-        _ = rd.spatial_acceleration(qdd, frame_id, state, reference_frame=ref_frame)
+        bard.update_kinematics(model, data, q, qd)
+        _ = bard.spatial_acceleration(model, data, qdd, frame_id, reference_frame=ref_frame)
         if DEVICE == "cuda":
             torch.cuda.synchronize()
         times.append(time.perf_counter() - t0)
@@ -131,7 +131,8 @@ def bench_pin_torch(wrapper, q, qd, qdd, frame_id, ref_frame, nrep, nwarm):
 
 
 def verify_short(
-    rd,
+    model,
+    data,
     q,
     qd,
     qdd,
@@ -144,9 +145,9 @@ def verify_short(
     qd_pin,
     qdd_pin,
 ):
-    state = rd.update_kinematics(q[:1], qd[:1])
+    bard.update_kinematics(model, data, q[:1], qd[:1])
     a_bard = (
-        rd.spatial_acceleration(qdd[:1], bard_frame_id, state, reference_frame=ref_frame)[0]
+        bard.spatial_acceleration(model, data, qdd[:1], bard_frame_id, reference_frame=ref_frame)[0]
         .detach()
         .cpu()
         .numpy()
@@ -172,32 +173,33 @@ def verify_short(
 
 
 def main():
-    print("Benchmarking RobotDynamics.spatial_acceleration()")
+    print("Benchmarking bard.spatial_acceleration()")
     print("device={} dtype={}".format(DEVICE, DTYPE))
 
-    chain, pin_model, pin_data = load_robot()
+    model, pin_model, pin_data = load_robot()
     max_batch = max(BATCH_SIZES)
-    rd = RobotDynamics(
-        chain, max_batch_size=max_batch, compile_enabled=(DEVICE == "cuda")
-    ).to(dtype=DTYPE, device=DEVICE)
+    if DEVICE == "cuda":
+        model.enable_compilation(True)
+    data = bard.create_data(model, max_batch_size=max_batch)
 
     # end-effector frame
-    test_frame = chain.get_frame_names(exclude_fixed=True)[-1]
-    bard_fid = chain.get_frame_id(test_frame)
+    test_frame = model.get_frame_names(exclude_fixed=True)[-1]
+    bard_fid = model.get_frame_id(test_frame)
     pin_fid = pin_model.getFrameId(test_frame)
 
     # tiny one-liner about the model
-    print("frame={} id={} nq={} nv={}".format(test_frame, bard_fid, chain.nq, chain.nv))
+    print("frame={} id={} nq={} nv={}".format(test_frame, bard_fid, model.nq, model.nv))
 
     for ref in ["world", "local"]:
         rows = []
         for B in BATCH_SIZES:
-            q, qd, qdd, q_pin, qd_pin, qdd_pin = generate_random_configuration(chain, B)
+            q, qd, qdd, q_pin, qd_pin, qdd_pin = generate_random_configuration(model, B)
 
             # short correctness only once for smallest batch in world frame
             if B == BATCH_SIZES[0] and ref == "world":
                 verify_short(
-                    rd,
+                    model,
+                    data,
                     q,
                     qd,
                     qdd,
@@ -216,7 +218,7 @@ def main():
 
             # run
             print("running batch_size={}...".format(B), end="", flush=True)
-            t_bard = bench_bard(rd, q, qd, qdd, bard_fid, ref, NUM_REPEATS, WARMUP_ITERS)
+            t_bard = bench_bard(model, data, q, qd, qdd, bard_fid, ref, NUM_REPEATS, WARMUP_ITERS)
             print(" bard finished({:.2f}ms). ".format(np.mean(t_bard) * 1000.0), end="", flush=True)
             t_pin = bench_pin(
                 pin_model, pin_data, q_pin, qd_pin, qdd_pin, pin_fid, ref, NUM_REPEATS, WARMUP_ITERS

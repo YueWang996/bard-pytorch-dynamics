@@ -1,7 +1,6 @@
 from pathlib import Path
 import torch
-from bard.parsers.urdf import build_chain_from_urdf
-from bard.core.jacobian import Jacobian
+import bard
 
 script_dir = Path(__file__).parent
 urdf_path = script_dir / "example_robots/xarm_description/urdf/xarm7.urdf"
@@ -12,27 +11,30 @@ def main():
     An example of computing the Jacobian for a batch of configurations.
     """
     # Load a robot from a URDF file
-    chain = build_chain_from_urdf(urdf_path).to(dtype=torch.float32, device="cpu")
+    model = bard.build_model_from_urdf(urdf_path).to(dtype=torch.float32, device="cpu")
 
-    # Instantiate the Jacobian class once, specifying the max batch size
+    # Create data workspace with the desired batch size
     batch_size = 1000
-    jac = Jacobian(chain, max_batch_size=batch_size)
+    data = bard.create_data(model, max_batch_size=batch_size)
 
     # 1. Define a large batch of random joint configurations
-    q_batch = torch.rand(batch_size, chain.n_joints) * torch.pi
+    q_batch = torch.rand(batch_size, model.n_joints) * torch.pi
 
     # 2. Select the end-effector frame
-    ee_frame_name = chain.get_frame_names(exclude_fixed=True)[-1]
-    ee_frame_idx = chain.get_frame_id(ee_frame_name)
+    ee_frame_name = model.get_frame_names(exclude_fixed=True)[-1]
+    ee_frame_idx = model.get_frame_id(ee_frame_name)
     print(
         f"Calculating Jacobian for frame '{ee_frame_name}' with a batch of {batch_size} configurations."
     )
 
-    # 3. Compute the Jacobian in the world frame for the entire batch
-    J_world_batch = jac.calc(q_batch, ee_frame_idx, reference_frame="world")
+    # 3. Update kinematics for the batch
+    bard.update_kinematics(model, data, q_batch)
 
-    # 4. Compute the Jacobian in the local (body) frame for the entire batch
-    J_local_batch = jac.calc(q_batch, ee_frame_idx, reference_frame="local")
+    # 4. Compute the Jacobian in the world frame for the entire batch
+    J_world_batch = bard.jacobian(model, data, ee_frame_idx, reference_frame="world")
+
+    # 5. Compute the Jacobian in the local (body) frame for the entire batch
+    J_local_batch = bard.jacobian(model, data, ee_frame_idx, reference_frame="local")
 
     print("\n--- Output Shapes ---")
     print(f"Input q shape:          {q_batch.shape}")

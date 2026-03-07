@@ -1,2 +1,2 @@
-from .robot_dynamics import RobotDynamics
-from .state import KinematicsState
+from .model import Model
+from .data import Data

@@ -2,7 +2,6 @@ from .basics import *
 import sys
 import copy
 
-
 # @todo Get rid of "import *"
 # @todo Make this work with decorators
 

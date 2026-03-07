@@ -4,7 +4,7 @@ This mirrors the C library test cases for verification.
 
 Tests:
 1. Zero configuration - FK and gravity compensation
-2. Base pitched 90 degrees - FK and torques  
+2. Base pitched 90 degrees - FK and torques
 3. Bent joints (30 deg each) - FK and gravity compensation
 4. CRBA Mass Matrix computation
 5. Forward Dynamics (free fall)
@@ -162,12 +162,10 @@ def print_vec(name, vec):
     print(row_str)
 
 
-
-
 def print_model_info():
     """Print detailed model information for debugging."""
     print_separator("Model Information")
-    
+
     # Fixed base model
     model = pin.buildModelFromUrdf(URDF_PATH)
     print(f"Fixed-base model:")
@@ -175,21 +173,23 @@ def print_model_info():
     print(f"  nq: {model.nq}, nv: {model.nv}")
     print(f"  njoints: {model.njoints}")
     print(f"  gravity: {model.gravity}")
-    
+
     print("\nJoint details:")
     for i in range(model.njoints):
         print(f"  Joint {i}: {model.names[i]}")
         if i > 0:
             placement = model.jointPlacements[i]
-            print(f"    Placement: trans=[{placement.translation[0]:.4f}, {placement.translation[1]:.4f}, {placement.translation[2]:.4f}]")
-    
+            print(
+                f"    Placement: trans=[{placement.translation[0]:.4f}, {placement.translation[1]:.4f}, {placement.translation[2]:.4f}]"
+            )
+
     print("\nFrame details:")
     for i in range(model.nframes):
         frame = model.frames[i]
         print(f"  Frame {i}: {frame.name} (type: {frame.type})")
-    
+
     # Floating base model
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     model_float = pin.buildModelFromUrdf(URDF_PATH, pin.JointModelFreeFlyer())
     print(f"Floating-base model:")
     print(f"  Name: {model_float.name}")
@@ -198,10 +198,10 @@ def print_model_info():
 
 
 if __name__ == "__main__":
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("  Pinocchio Verification Test for spine.urdf")
     print("  (Mirrors C Library Test Cases)")
-    print("="*60)
-    
+    print("=" * 60)
+
     # Run comprehensive tests
     comprehensive_test()

@@ -1,32 +1,31 @@
 API Reference
 =============
 
-This page provides the auto-generated API documentation for the core classes in ``bard``.
+This page provides the API documentation for ``bard``.
 
-Robot Dynamics
---------------
+Top-Level Functions
+-------------------
 
-.. automodule:: bard.core.robot_dynamics
-   :members: RobotDynamics
+.. automodule:: bard.api
+   :members: create_data, update_kinematics, forward_kinematics, jacobian, rnea, crba, spatial_acceleration
 
-Kinematics State
-----------------
+Model
+-----
 
-.. automodule:: bard.core.state
-   :members: KinematicsState
+.. automodule:: bard.core.model
+   :members: Model
 
-Robot Chain
------------
+Data
+----
 
-.. automodule:: bard.core.chain
-   :members: Chain
-   :exclude-members: nq, nv
+.. automodule:: bard.core.data
+   :members: Data
 
 URDF Parsing
 ------------
 
 .. automodule:: bard.parsers.urdf
-   :members:
+   :members: build_model_from_urdf
 
 Data Structures
 ---------------
@@ -39,17 +38,3 @@ Data Structures
 
 .. automodule:: bard.structures.link
    :members: Link
-
-Deprecated Classes
-------------------
-
-The following classes are deprecated. Use :class:`~bard.core.robot_dynamics.RobotDynamics` instead.
-
-.. automodule:: bard.core.kinematics
-   :members: ForwardKinematics, SpatialAcceleration
-
-.. automodule:: bard.core.jacobian
-   :members: Jacobian
-
-.. automodule:: bard.core.dynamics
-   :members: RNEA, CRBA

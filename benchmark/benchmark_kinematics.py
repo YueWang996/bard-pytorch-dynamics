@@ -9,7 +9,7 @@ import torch
 import pinocchio as pin
 from tabulate import tabulate
 
-from bard import build_chain_from_urdf, RobotDynamics
+import bard
 from benchconf import (
     URDF_PATH,
     BATCH_SIZES,
@@ -27,13 +27,13 @@ from benchconf import (
 
 
 def load_robot():
-    chain = build_chain_from_urdf(URDF_PATH, floating_base=True).to(dtype=DTYPE, device=DEVICE)
+    model = bard.build_model_from_urdf(URDF_PATH, floating_base=True).to(dtype=DTYPE, device=DEVICE)
     pin_model, pin_data = build_pin_model(URDF_PATH)
-    return chain, pin_model, pin_data
+    return model, pin_model, pin_data
 
 
-def generate_random_q(chain, B):
-    q = torch.randn(B, chain.nq, device=DEVICE, dtype=DTYPE)
+def generate_random_q(model, B):
+    q = torch.randn(B, model.nq, device=DEVICE, dtype=DTYPE)
     q[:, 3:7] = q[:, 3:7] / torch.linalg.norm(q[:, 3:7], dim=1, keepdim=True)
     q_pin = []
     for i in range(B):
@@ -47,9 +47,9 @@ def generate_random_q(chain, B):
 # ------------------------------
 
 
-def bench_bard(rd, q, frame_id, nrep, nwarm):
+def bench_bard(model, data, q, frame_id, nrep, nwarm):
     for _ in range(nwarm):
-        _ = rd.fk(q, frame_id)
+        _ = bard.forward_kinematics(model, data, frame_id, q=q)
     if DEVICE == "cuda":
         torch.cuda.synchronize()
     ts = []
@@ -57,7 +57,7 @@ def bench_bard(rd, q, frame_id, nrep, nwarm):
         if DEVICE == "cuda":
             torch.cuda.synchronize()
         t0 = time.perf_counter()
-        _ = rd.fk(q, frame_id)
+        _ = bard.forward_kinematics(model, data, frame_id, q=q)
         if DEVICE == "cuda":
             torch.cuda.synchronize()
         ts.append(time.perf_counter() - t0)
@@ -102,8 +102,8 @@ def bench_pin_torch(wrapper, q, frame_id, nrep, nwarm):
 # ------------------------------
 
 
-def verify_short(rd, q, bard_fid, pin_fid, pin_model, pin_data, q_pin):
-    T_bard = rd.fk(q[:1], bard_fid)[0].detach().cpu().numpy()
+def verify_short(model, data, q, bard_fid, pin_fid, pin_model, pin_data, q_pin):
+    T_bard = bard.forward_kinematics(model, data, bard_fid, q=q[:1])[0].detach().cpu().numpy()
     pin.framesForwardKinematics(pin_model, pin_data, q_pin[0])
     T_pin = pin_data.oMf[pin_fid].homogeneous
     max_diff = float(np.max(np.abs(T_bard - T_pin)))
@@ -123,28 +123,28 @@ def verify_short(rd, q, bard_fid, pin_fid, pin_model, pin_data, q_pin):
 
 
 def main():
-    print("Benchmarking RobotDynamics.fk()")
+    print("Benchmarking bard.forward_kinematics()")
     print("device={} dtype={}".format(DEVICE, DTYPE))
-    chain, pin_model, pin_data = load_robot()
+    model, pin_model, pin_data = load_robot()
     max_batch = max(BATCH_SIZES)
-    rd = RobotDynamics(chain, max_batch_size=max_batch, compile_enabled=(DEVICE == "cuda")).to(
-        dtype=DTYPE, device=DEVICE
-    )
-    test_frame = chain.get_frame_names(exclude_fixed=True)[-1]
-    bard_fid = chain.get_frame_id(test_frame)
+    if DEVICE == "cuda":
+        model.enable_compilation(True)
+    data = bard.create_data(model, max_batch_size=max_batch)
+    test_frame = model.get_frame_names(exclude_fixed=True)[-1]
+    bard_fid = model.get_frame_id(test_frame)
     pin_fid = pin_model.getFrameId(test_frame)
     print("frame={} id={}".format(test_frame, bard_fid))
 
     rows = []
     for B in BATCH_SIZES:
-        q, q_pin = generate_random_q(chain, B)
+        q, q_pin = generate_random_q(model, B)
         if B == BATCH_SIZES[0]:
-            verify_short(rd, q, bard_fid, pin_fid, pin_model, pin_data, q_pin)
+            verify_short(model, data, q, bard_fid, pin_fid, pin_model, pin_data, q_pin)
 
         wrapper = PinocchioTorchWrapper(pin_model, device=DEVICE, dtype=DTYPE)
 
         print("running batch_size={}...".format(B), end="", flush=True)
-        t_bard = bench_bard(rd, q, bard_fid, NUM_REPEATS, WARMUP_ITERS)
+        t_bard = bench_bard(model, data, q, bard_fid, NUM_REPEATS, WARMUP_ITERS)
         print(" bard finished({:.2f}ms). ".format(np.mean(t_bard) * 1000.0), end="", flush=True)
         t_pin = bench_pin(pin_model, pin_data, q_pin, pin_fid, NUM_REPEATS, WARMUP_ITERS)
         print(" pinocchio finished({:.2f}ms). ".format(np.mean(t_pin) * 1000.0), end="", flush=True)
