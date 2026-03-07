@@ -9,8 +9,7 @@ import torch
 import pinocchio as pin
 from tabulate import tabulate
 
-from bard.parsers.urdf import build_chain_from_urdf
-from bard import Jacobian
+from bard import build_chain_from_urdf, RobotDynamics
 from benchconf import (
     URDF_PATH,
     BATCH_SIZES,
@@ -49,9 +48,10 @@ def generate_random_q(chain, B):
 # ------------------------------
 
 
-def bench_bard(op, q, frame_id, ref, nrep, nwarm):
+def bench_bard(rd, q, frame_id, ref, nrep, nwarm):
     for _ in range(nwarm):
-        _ = op.calc(q, frame_id, reference_frame=ref)
+        state = rd.update_kinematics(q)
+        _ = rd.jacobian(frame_id, state, reference_frame=ref)
     if DEVICE == "cuda":
         torch.cuda.synchronize()
     ts = []
@@ -59,7 +59,8 @@ def bench_bard(op, q, frame_id, ref, nrep, nwarm):
         if DEVICE == "cuda":
             torch.cuda.synchronize()
         t0 = time.perf_counter()
-        _ = op.calc(q, frame_id, reference_frame=ref)
+        state = rd.update_kinematics(q)
+        _ = rd.jacobian(frame_id, state, reference_frame=ref)
         if DEVICE == "cuda":
             torch.cuda.synchronize()
         ts.append(time.perf_counter() - t0)
@@ -105,8 +106,9 @@ def bench_pin_torch(wrapper, q, frame_id, ref, nrep, nwarm):
 # ------------------------------
 
 
-def verify_short(op, q, bard_fid, pin_fid, ref, pin_model, pin_data, q_pin):
-    J_bard = op.calc(q[:1], bard_fid, reference_frame=ref)[0].detach().cpu().numpy()
+def verify_short(rd, q, bard_fid, pin_fid, ref, pin_model, pin_data, q_pin):
+    state = rd.update_kinematics(q[:1])
+    J_bard = rd.jacobian(bard_fid, state, reference_frame=ref)[0].detach().cpu().numpy()
     pin.framesForwardKinematics(pin_model, pin_data, q_pin[0])
     J_pin = pin.computeFrameJacobian(pin_model, pin_data, q_pin[0], pin_fid, ref_frame_to_pin(ref))
     max_diff = float(np.max(np.abs(J_bard - J_pin)))
@@ -126,11 +128,11 @@ def verify_short(op, q, bard_fid, pin_fid, ref, pin_model, pin_data, q_pin):
 
 
 def main():
-    print("Benchmarking Jacobian.calc()")
+    print("Benchmarking RobotDynamics.jacobian()")
     print("device={} dtype={}".format(DEVICE, DTYPE))
     chain, pin_model, pin_data = load_robot()
     max_batch = max(BATCH_SIZES)
-    op = Jacobian(chain, max_batch_size=max_batch, compile_enabled=(DEVICE == "cuda")).to(
+    rd = RobotDynamics(chain, max_batch_size=max_batch, compile_enabled=(DEVICE == "cuda")).to(
         dtype=DTYPE, device=DEVICE
     )
     test_frame = chain.get_frame_names(exclude_fixed=True)[-1]
@@ -143,12 +145,12 @@ def main():
         for B in BATCH_SIZES:
             q, q_pin = generate_random_q(chain, B)
             if B == BATCH_SIZES[0] and ref == "world":
-                verify_short(op, q, bard_fid, pin_fid, ref, pin_model, pin_data, q_pin)
+                verify_short(rd, q, bard_fid, pin_fid, ref, pin_model, pin_data, q_pin)
 
             wrapper = PinocchioTorchWrapper(pin_model, device=DEVICE, dtype=DTYPE)
 
             print("running batch_size={}...".format(B), end="", flush=True)
-            t_bard = bench_bard(op, q, bard_fid, ref, NUM_REPEATS, WARMUP_ITERS)
+            t_bard = bench_bard(rd, q, bard_fid, ref, NUM_REPEATS, WARMUP_ITERS)
             print(" bard finished({:.2f}ms). ".format(np.mean(t_bard) * 1000.0), end="", flush=True)
             t_pin = bench_pin(pin_model, pin_data, q_pin, pin_fid, ref, NUM_REPEATS, WARMUP_ITERS)
             print(

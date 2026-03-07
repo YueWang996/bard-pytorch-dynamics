@@ -22,7 +22,7 @@ The primary motivation behind `bard` is to provide a dynamics library that integ
 | **Auto-Differentiation (Autograd)** | ✅ | ❌ | ❌ | ✅ |
 | **Floating-Base Support** | ✅ | ✅ | ✅ | ❌ |
 | **Forward Kinematics** | ✅ | ✅ | ✅ | ✅ |
-| **Inverse Kinematics** | 🔜 | ✅ | ✅ | ✅ |
+| **Inverse Kinematics** | ❌ | ✅ | ✅ | ✅ |
 | **Jacobian Calculation** | ✅ | ✅ | ✅ | ✅ |
 | **Inverse Dynamics (RNEA)** | ✅ | ✅ | ✅ | ❌ |
 | **Forward Dynamics (ABA)** | ❌ | ✅ | ✅ | ❌ |
@@ -35,6 +35,42 @@ The primary motivation behind `bard` is to provide a dynamics library that integ
 - Efficient batched operations for training neural networks with thousands of parallel simulations
 - Full differentiability through robot dynamics for gradient-based optimization
 - Native GPU support without requiring C++/CUDA compilation
+
+## Quick Start
+
+### Basic Usage (Cached Workflow)
+
+The `RobotDynamics` class is the primary API. It computes shared kinematic quantities once via `update_kinematics()` and reuses them across all subsequent algorithm calls, eliminating redundant computation.
+
+```python
+import torch
+import bard
+
+# Load robot and create dynamics interface
+chain = bard.build_chain_from_urdf("robot.urdf", floating_base=True)
+chain.to(dtype=torch.float32, device="cuda")
+rd = bard.RobotDynamics(chain, max_batch_size=4096)
+
+eef_id = chain.get_frame_id("end_effector_link")
+
+# In your control / RL training loop:
+# 1. Single tree traversal — caches everything
+state = rd.update_kinematics(q, qd)
+
+# 2. All algorithms reuse cached state (no redundant computation)
+T_eef = rd.forward_kinematics(eef_id, state)            # O(1) lookup
+J     = rd.jacobian(eef_id, state, reference_frame="world")
+tau   = rd.rnea(qdd, state, gravity=gravity)
+M     = rd.crba(state)
+```
+
+### Standalone FK (No Cache Needed)
+
+For single-frame queries without needing a full tree traversal:
+
+```python
+T = rd.fk(q, frame_id)  # Path-only traversal
+```
 
 ## Benchmarks 🚀
 

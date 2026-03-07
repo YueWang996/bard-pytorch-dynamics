@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bard"
-version = "0.2"
+version = "0.3"
 description = "Batched Articulated Robot Dynamics - Efficient robot kinematics and dynamics in PyTorch"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -73,8 +73,8 @@ Homepage = "https://github.com/YueWang996/bard"
 Repository = "https://github.com/YueWang996/bard"
 Issues = "https://github.com/YueWang996/bard/issues"
 
-[tool.setuptools]
-packages = ["bard"]
+[tool.setuptools.packages.find]
+where = ["."]
 
 [tool.setuptools.package-data]
 bard = ["py.typed"]

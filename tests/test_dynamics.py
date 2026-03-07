@@ -16,8 +16,7 @@ import torch
 import numpy as np
 import pinocchio as pin
 
-from bard.parsers.urdf import build_chain_from_urdf
-from bard.core.dynamics import RNEA, CRBA
+from bard import build_chain_from_urdf, RobotDynamics
 
 
 def compare_vectors(tau_bard, tau_pin, dtype, name="vector"):
@@ -94,8 +93,7 @@ class TestDynamics:
         bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model_fixed
 
-        # Create RNEA instance
-        rnea = RNEA(bard_chain, max_batch_size=1, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=1, compile_enabled=False)
 
         torch.manual_seed(1000)
         q = torch.rand(1, bard_chain.n_joints, device=device, dtype=dtype)
@@ -103,7 +101,8 @@ class TestDynamics:
         qdd = torch.randn(1, bard_chain.n_joints, device=device, dtype=dtype)
 
         # Bard RNEA
-        tau_bard = rnea.calc(q, qd, qdd)[0].cpu().numpy()
+        state = rd.update_kinematics(q, qd)
+        tau_bard = rd.rnea(qdd, state)[0].cpu().numpy()
 
         # Pinocchio RNEA
         q_pin = q[0].cpu().numpy()
@@ -118,7 +117,7 @@ class TestDynamics:
         bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model_fixed
 
-        rnea = RNEA(bard_chain, max_batch_size=1, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=1, compile_enabled=False)
 
         torch.manual_seed(1001)
         q = torch.rand(1, bard_chain.n_joints, device=device, dtype=dtype)
@@ -131,18 +130,21 @@ class TestDynamics:
 
         # Gravity term: RNEA(q, 0, 0)
         zeros = torch.zeros_like(q)
-        g_bard = rnea.calc(q, zeros, zeros)[0].cpu().numpy()
+        state_g = rd.update_kinematics(q, zeros)
+        g_bard = rd.rnea(zeros, state_g)[0].cpu().numpy()
         g_pin = pin.computeGeneralizedGravity(pin_model_obj, pin_data, q_pin)
         compare_vectors(g_bard, g_pin, dtype, name="Gravity term")
 
         # Coriolis term: RNEA(q, qd, 0, g=0)
         zero_gravity = torch.zeros(3, device=device, dtype=dtype)
-        c_bard = rnea.calc(q, qd, zeros, gravity=zero_gravity)[0].cpu().numpy()
+        state_c = rd.update_kinematics(q, qd)
+        c_bard = rd.rnea(zeros, state_c, gravity=zero_gravity)[0].cpu().numpy()
         c_pin = pin.computeCoriolisMatrix(pin_model_obj, pin_data, q_pin, qd_pin) @ qd_pin
         compare_vectors(c_bard, c_pin, dtype, name="Coriolis term")
 
         # Full RNEA
-        tau_bard = rnea.calc(q, qd, qdd)[0].cpu().numpy()
+        state_full = rd.update_kinematics(q, qd)
+        tau_bard = rd.rnea(qdd, state_full)[0].cpu().numpy()
         tau_pin = pin.rnea(pin_model_obj, pin_data, q_pin, qd_pin, qdd_pin)
         compare_vectors(tau_bard, tau_pin, dtype, name="Full RNEA")
 
@@ -152,7 +154,7 @@ class TestDynamics:
         pin_model_obj, pin_data = pin_model_fixed
         batch_size = 20
 
-        rnea = RNEA(bard_chain, max_batch_size=batch_size, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=batch_size, compile_enabled=False)
 
         torch.manual_seed(1002)
         q_batch = torch.rand(batch_size, bard_chain.n_joints, device=device, dtype=dtype) * np.pi
@@ -160,7 +162,8 @@ class TestDynamics:
         qdd_batch = torch.randn(batch_size, bard_chain.n_joints, device=device, dtype=dtype)
 
         # Batched computation
-        tau_bard_batch = rnea.calc(q_batch, qd_batch, qdd_batch).cpu().numpy()
+        state = rd.update_kinematics(q_batch, qd_batch)
+        tau_bard_batch = rd.rnea(qdd_batch, state).cpu().numpy()
 
         # Verify each sample
         for i in range(batch_size):
@@ -182,13 +185,14 @@ class TestDynamics:
         bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model_fixed
 
-        crba = CRBA(bard_chain, max_batch_size=1, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=1, compile_enabled=False)
 
         torch.manual_seed(1010)
         q = torch.rand(1, bard_chain.n_joints, device=device, dtype=dtype)
 
         # Bard CRBA
-        M_bard = crba.calc(q)[0].cpu().numpy()
+        state = rd.update_kinematics(q)
+        M_bard = rd.crba(state)[0].cpu().numpy()
 
         # Pinocchio CRBA
         M_pin = pin.crba(pin_model_obj, pin_data, q[0].cpu().numpy())
@@ -201,13 +205,14 @@ class TestDynamics:
         pin_model_obj, pin_data = pin_model_fixed
         batch_size = 20
 
-        crba = CRBA(bard_chain, max_batch_size=batch_size, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=batch_size, compile_enabled=False)
 
         torch.manual_seed(1011)
         q_batch = torch.rand(batch_size, bard_chain.n_joints, device=device, dtype=dtype) * np.pi
 
         # Batched computation
-        M_bard_batch = crba.calc(q_batch).cpu().numpy()
+        state = rd.update_kinematics(q_batch)
+        M_bard_batch = rd.crba(state).cpu().numpy()
 
         # Verify each sample
         for i in range(batch_size):
@@ -218,8 +223,7 @@ class TestDynamics:
         """Verifies RNEA-CRBA consistency: M*qdd == RNEA(q, 0, qdd, g=0)."""
         bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
 
-        rnea = RNEA(bard_chain, max_batch_size=1, compile_enabled=False)
-        crba = CRBA(bard_chain, max_batch_size=1, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=1, compile_enabled=False)
 
         torch.manual_seed(1020)
         q = torch.rand(1, bard_chain.n_joints, device=device, dtype=dtype)
@@ -228,10 +232,12 @@ class TestDynamics:
         # RNEA with zero velocity and gravity
         zeros = torch.zeros_like(q)
         zero_gravity = torch.zeros(3, device=device, dtype=dtype)
-        tau_rnea = rnea.calc(q, zeros, qdd, gravity=zero_gravity)[0]
+        state_rnea = rd.update_kinematics(q, zeros)
+        tau_rnea = rd.rnea(qdd, state_rnea, gravity=zero_gravity)[0]
 
         # CRBA
-        M = crba.calc(q)[0]
+        state_crba = rd.update_kinematics(q)
+        M = rd.crba(state_crba)[0]
         tau_crba = M @ qdd[0]
 
         # Should match
@@ -257,7 +263,7 @@ class TestDynamics:
         )
         pin_model_obj, pin_data = pin_model_floating
 
-        rnea = RNEA(bard_chain, max_batch_size=1, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=1, compile_enabled=False)
 
         torch.manual_seed(2000)
 
@@ -272,7 +278,8 @@ class TestDynamics:
         qdd = torch.randn(1, 6 + bard_chain.n_joints, device=device, dtype=dtype)
 
         # Bard RNEA
-        tau_bard = rnea.calc(q, qd, qdd)[0].cpu().numpy()
+        state = rd.update_kinematics(q, qd)
+        tau_bard = rd.rnea(qdd, state)[0].cpu().numpy()
 
         # Convert to Pinocchio format
         q_pin = np.concatenate(
@@ -299,7 +306,7 @@ class TestDynamics:
         pin_model_obj, pin_data = pin_model_floating
         batch_size = 20
 
-        rnea = RNEA(bard_chain, max_batch_size=batch_size, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=batch_size, compile_enabled=False)
 
         torch.manual_seed(2001)
 
@@ -314,7 +321,8 @@ class TestDynamics:
         qdd_batch = torch.randn(batch_size, 6 + bard_chain.n_joints, device=device, dtype=dtype)
 
         # Batched computation
-        tau_bard_batch = rnea.calc(q_batch, qd_batch, qdd_batch).cpu().numpy()
+        state = rd.update_kinematics(q_batch, qd_batch)
+        tau_bard_batch = rd.rnea(qdd_batch, state).cpu().numpy()
 
         # Verify each sample
         for i in range(batch_size):
@@ -347,7 +355,7 @@ class TestDynamics:
         )
         pin_model_obj, pin_data = pin_model_floating
 
-        crba = CRBA(bard_chain, max_batch_size=1, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=1, compile_enabled=False)
 
         torch.manual_seed(2010)
 
@@ -358,7 +366,8 @@ class TestDynamics:
         q = torch.cat([translations, quats_wxyz, q_joints], dim=1)
 
         # Bard CRBA
-        M_bard = crba.calc(q)[0].cpu().numpy()
+        state = rd.update_kinematics(q)
+        M_bard = rd.crba(state)[0].cpu().numpy()
 
         # Pinocchio CRBA
         q_pin = np.concatenate(
@@ -381,7 +390,7 @@ class TestDynamics:
         pin_model_obj, pin_data = pin_model_floating
         batch_size = 20
 
-        crba = CRBA(bard_chain, max_batch_size=batch_size, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=batch_size, compile_enabled=False)
 
         torch.manual_seed(2011)
 
@@ -392,7 +401,8 @@ class TestDynamics:
         q_batch = torch.cat([translations, quats_wxyz, q_joints], dim=1)
 
         # Batched computation
-        M_bard_batch = crba.calc(q_batch).cpu().numpy()
+        state = rd.update_kinematics(q_batch)
+        M_bard_batch = rd.crba(state).cpu().numpy()
 
         # Verify each sample
         for i in range(batch_size):
@@ -416,8 +426,7 @@ class TestDynamics:
             dtype=dtype, device=device
         )
 
-        rnea = RNEA(bard_chain, max_batch_size=1, compile_enabled=False)
-        crba = CRBA(bard_chain, max_batch_size=1, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=1, compile_enabled=False)
 
         torch.manual_seed(2020)
 
@@ -432,10 +441,12 @@ class TestDynamics:
         # RNEA with zero velocity and gravity
         zeros = torch.zeros(1, 6 + bard_chain.n_joints, device=device, dtype=dtype)
         zero_gravity = torch.zeros(3, device=device, dtype=dtype)
-        tau_rnea = rnea.calc(q, zeros, qdd, gravity=zero_gravity)[0]
+        state_rnea = rd.update_kinematics(q, zeros)
+        tau_rnea = rd.rnea(qdd, state_rnea, gravity=zero_gravity)[0]
 
         # CRBA
-        M = crba.calc(q)[0]
+        state_crba = rd.update_kinematics(q)
+        M = rd.crba(state_crba)[0]
         tau_crba = M @ qdd[0]
 
         # Should match
@@ -452,48 +463,50 @@ class TestDynamics:
         """Verifies that RNEA raises error when exceeding max_batch_size."""
         bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
 
-        rnea = RNEA(bard_chain, max_batch_size=5, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=5, compile_enabled=False)
 
         # Should work
         q_ok = torch.rand(5, bard_chain.n_joints, device=device, dtype=dtype)
         qd_ok = torch.randn(5, bard_chain.n_joints, device=device, dtype=dtype)
         qdd_ok = torch.randn(5, bard_chain.n_joints, device=device, dtype=dtype)
-        result = rnea.calc(q_ok, qd_ok, qdd_ok)
+        state = rd.update_kinematics(q_ok, qd_ok)
+        result = rd.rnea(qdd_ok, state)
         assert result.shape[0] == 5, "Should process 5 samples"
 
         # Should raise
         q_large = torch.rand(10, bard_chain.n_joints, device=device, dtype=dtype)
         qd_large = torch.randn(10, bard_chain.n_joints, device=device, dtype=dtype)
-        qdd_large = torch.randn(10, bard_chain.n_joints, device=device, dtype=dtype)
         with pytest.raises(ValueError, match="exceeds max_batch_size"):
-            _ = rnea.calc(q_large, qd_large, qdd_large)
+            _ = rd.update_kinematics(q_large, qd_large)
 
     def test_crba_batch_size_validation(self, urdf_path, dtype, device):
         """Verifies that CRBA raises error when exceeding max_batch_size."""
         bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
 
-        crba = CRBA(bard_chain, max_batch_size=5, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=5, compile_enabled=False)
 
         # Should work
         q_ok = torch.rand(5, bard_chain.n_joints, device=device, dtype=dtype)
-        result = crba.calc(q_ok)
+        state = rd.update_kinematics(q_ok)
+        result = rd.crba(state)
         assert result.shape[0] == 5, "Should process 5 samples"
 
         # Should raise
         q_large = torch.rand(10, bard_chain.n_joints, device=device, dtype=dtype)
         with pytest.raises(ValueError, match="exceeds max_batch_size"):
-            _ = crba.calc(q_large)
+            _ = rd.update_kinematics(q_large)
 
     def test_crba_symmetry(self, urdf_path, dtype, device):
         """Verifies that mass matrix is symmetric."""
         bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
 
-        crba = CRBA(bard_chain, max_batch_size=1, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=1, compile_enabled=False)
 
         torch.manual_seed(3000)
         q = torch.rand(1, bard_chain.n_joints, device=device, dtype=dtype)
 
-        M = crba.calc(q)[0]
+        state = rd.update_kinematics(q)
+        M = rd.crba(state)[0]
 
         # Check symmetry
         tol = 1e-8 if dtype == torch.float64 else 1e-6
@@ -505,12 +518,13 @@ class TestDynamics:
         """Verifies that mass matrix is positive definite."""
         bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
 
-        crba = CRBA(bard_chain, max_batch_size=1, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=1, compile_enabled=False)
 
         torch.manual_seed(3001)
         q = torch.rand(1, bard_chain.n_joints, device=device, dtype=dtype)
 
-        M = crba.calc(q)[0]
+        state = rd.update_kinematics(q)
+        M = rd.crba(state)[0]
 
         # Check positive definiteness via eigenvalues
         eigenvalues = torch.linalg.eigvalsh(M)

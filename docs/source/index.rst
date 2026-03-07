@@ -13,3 +13,4 @@ optimization, and model-based control.
    installation
    quickstart
    api
+   changelog

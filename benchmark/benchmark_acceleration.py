@@ -15,8 +15,7 @@ import torch
 import pinocchio as pin
 from tabulate import tabulate
 
-from bard.parsers.urdf import build_chain_from_urdf
-from bard import SpatialAcceleration
+from bard import build_chain_from_urdf, RobotDynamics
 from benchconf import (
     URDF_PATH,
     BATCH_SIZES,
@@ -69,9 +68,10 @@ def generate_random_configuration(chain, batch_size):
 # ------------------------------
 
 
-def bench_bard(accel, q, qd, qdd, frame_id, ref_frame, nrep, nwarm):
+def bench_bard(rd, q, qd, qdd, frame_id, ref_frame, nrep, nwarm):
     for _ in range(nwarm):
-        _ = accel.calc(q, qd, qdd, frame_id, reference_frame=ref_frame)
+        state = rd.update_kinematics(q, qd)
+        _ = rd.spatial_acceleration(qdd, frame_id, state, reference_frame=ref_frame)
     if DEVICE == "cuda":
         torch.cuda.synchronize()
 
@@ -80,7 +80,8 @@ def bench_bard(accel, q, qd, qdd, frame_id, ref_frame, nrep, nwarm):
         if DEVICE == "cuda":
             torch.cuda.synchronize()
         t0 = time.perf_counter()
-        _ = accel.calc(q, qd, qdd, frame_id, reference_frame=ref_frame)
+        state = rd.update_kinematics(q, qd)
+        _ = rd.spatial_acceleration(qdd, frame_id, state, reference_frame=ref_frame)
         if DEVICE == "cuda":
             torch.cuda.synchronize()
         times.append(time.perf_counter() - t0)
@@ -130,7 +131,7 @@ def bench_pin_torch(wrapper, q, qd, qdd, frame_id, ref_frame, nrep, nwarm):
 
 
 def verify_short(
-    accel,
+    rd,
     q,
     qd,
     qdd,
@@ -143,8 +144,9 @@ def verify_short(
     qd_pin,
     qdd_pin,
 ):
+    state = rd.update_kinematics(q[:1], qd[:1])
     a_bard = (
-        accel.calc(q[:1], qd[:1], qdd[:1], bard_frame_id, reference_frame=ref_frame)[0]
+        rd.spatial_acceleration(qdd[:1], bard_frame_id, state, reference_frame=ref_frame)[0]
         .detach()
         .cpu()
         .numpy()
@@ -170,12 +172,12 @@ def verify_short(
 
 
 def main():
-    print("Benchmarking SpatialAcceleration.calc()")
+    print("Benchmarking RobotDynamics.spatial_acceleration()")
     print("device={} dtype={}".format(DEVICE, DTYPE))
 
     chain, pin_model, pin_data = load_robot()
     max_batch = max(BATCH_SIZES)
-    accel = SpatialAcceleration(
+    rd = RobotDynamics(
         chain, max_batch_size=max_batch, compile_enabled=(DEVICE == "cuda")
     ).to(dtype=DTYPE, device=DEVICE)
 
@@ -195,7 +197,7 @@ def main():
             # short correctness only once for smallest batch in world frame
             if B == BATCH_SIZES[0] and ref == "world":
                 verify_short(
-                    accel,
+                    rd,
                     q,
                     qd,
                     qdd,
@@ -214,7 +216,7 @@ def main():
 
             # run
             print("running batch_size={}...".format(B), end="", flush=True)
-            t_bard = bench_bard(accel, q, qd, qdd, bard_fid, ref, NUM_REPEATS, WARMUP_ITERS)
+            t_bard = bench_bard(rd, q, qd, qdd, bard_fid, ref, NUM_REPEATS, WARMUP_ITERS)
             print(" bard finished({:.2f}ms). ".format(np.mean(t_bard) * 1000.0), end="", flush=True)
             t_pin = bench_pin(
                 pin_model, pin_data, q_pin, qd_pin, qdd_pin, pin_fid, ref, NUM_REPEATS, WARMUP_ITERS

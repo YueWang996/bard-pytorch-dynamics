@@ -7,8 +7,10 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = "bard"
-copyright = "2025, Yue Wang"
+copyright = "2025-2026, Yue Wang"
 author = "Yue Wang"
+version = "0.3"
+release = "0.3"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration

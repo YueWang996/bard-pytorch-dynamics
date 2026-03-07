@@ -15,8 +15,7 @@ import torch
 import numpy as np
 import pinocchio as pin
 
-from bard.parsers.urdf import build_chain_from_urdf
-from bard import SpatialAcceleration
+from bard import build_chain_from_urdf, RobotDynamics
 
 
 def compare_accelerations(a_bard, a_pin, dtype):
@@ -75,8 +74,7 @@ class TestSpatialAcceleration:
         bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model_fixed
 
-        # Create acceleration instance (without compilation)
-        accel = SpatialAcceleration(bard_chain, max_batch_size=1, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=1, compile_enabled=False)
 
         torch.manual_seed(1337)
         np.random.seed(1337)
@@ -93,7 +91,10 @@ class TestSpatialAcceleration:
             qdd = torch.randn(1, bard_chain.n_joints, device=device, dtype=dtype)
 
             # Bard acceleration
-            a_bard = accel.calc(q, qd, qdd, bard_frame_idx, reference_frame=reference_frame)
+            state = rd.update_kinematics(q, qd)
+            a_bard = rd.spatial_acceleration(
+                qdd, bard_frame_idx, state, reference_frame=reference_frame
+            )
             a_bard_np = a_bard[0].cpu().numpy()
 
             # Pinocchio acceleration
@@ -117,8 +118,7 @@ class TestSpatialAcceleration:
         pin_model_obj, pin_data = pin_model_fixed
         batch_size = 20
 
-        # Create acceleration instance with appropriate batch size
-        accel = SpatialAcceleration(bard_chain, max_batch_size=batch_size, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=batch_size, compile_enabled=False)
 
         torch.manual_seed(42)
         q_batch = torch.rand(batch_size, bard_chain.n_joints, device=device, dtype=dtype) * np.pi
@@ -130,8 +130,9 @@ class TestSpatialAcceleration:
         pin_frame_id = pin_model_obj.getFrameId(test_frame_name)
 
         # Batched computation (world frame)
+        state = rd.update_kinematics(q_batch, qd_batch)
         a_bard_batch = (
-            accel.calc(q_batch, qd_batch, qdd_batch, bard_frame_idx, reference_frame="world")
+            rd.spatial_acceleration(qdd_batch, bard_frame_idx, state, reference_frame="world")
             .cpu()
             .numpy()
         )
@@ -154,7 +155,7 @@ class TestSpatialAcceleration:
         bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model_fixed
 
-        accel = SpatialAcceleration(bard_chain, max_batch_size=1, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=1, compile_enabled=False)
 
         # Non-zero position, but zero velocity and acceleration
         q = torch.rand(1, bard_chain.n_joints, device=device, dtype=dtype) * 0.5
@@ -165,7 +166,12 @@ class TestSpatialAcceleration:
         frame_idx = bard_chain.get_frame_id(test_frame_name)
         pin_frame_id = pin_model_obj.getFrameId(test_frame_name)
 
-        a_bard = accel.calc(q, qd, qdd, frame_idx, reference_frame="world")[0].cpu().numpy()
+        state = rd.update_kinematics(q, qd)
+        a_bard = (
+            rd.spatial_acceleration(qdd, frame_idx, state, reference_frame="world")[0]
+            .cpu()
+            .numpy()
+        )
 
         pin.forwardKinematics(
             pin_model_obj, pin_data, q[0].cpu().numpy(), qd[0].cpu().numpy(), qdd[0].cpu().numpy()
@@ -203,8 +209,7 @@ class TestSpatialAcceleration:
         )
         pin_model_obj, pin_data = pin_model_floating
 
-        # Create acceleration instance
-        accel = SpatialAcceleration(bard_chain, max_batch_size=1, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=1, compile_enabled=False)
 
         torch.manual_seed(2048)
         np.random.seed(2048)
@@ -232,7 +237,10 @@ class TestSpatialAcceleration:
             qdd = torch.cat([a_base, qdd_joints], dim=1)
 
             # Bard acceleration
-            a_bard = accel.calc(q, qd, qdd, bard_frame_idx, reference_frame=reference_frame)
+            state = rd.update_kinematics(q, qd)
+            a_bard = rd.spatial_acceleration(
+                qdd, bard_frame_idx, state, reference_frame=reference_frame
+            )
             a_bard_np = a_bard[0].cpu().numpy()
 
             # Convert to Pinocchio format
@@ -266,8 +274,7 @@ class TestSpatialAcceleration:
         pin_model_obj, pin_data = pin_model_floating
         batch_size = 20
 
-        # Create acceleration instance
-        accel = SpatialAcceleration(bard_chain, max_batch_size=batch_size, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=batch_size, compile_enabled=False)
 
         torch.manual_seed(123)
 
@@ -291,8 +298,9 @@ class TestSpatialAcceleration:
         pin_frame_id = pin_model_obj.getFrameId(test_frame_name)
 
         # Batched computation
+        state = rd.update_kinematics(q_batch, qd_batch)
         a_bard_batch = (
-            accel.calc(q_batch, qd_batch, qdd_batch, bard_frame_idx, reference_frame="world")
+            rd.spatial_acceleration(qdd_batch, bard_frame_idx, state, reference_frame="world")
             .cpu()
             .numpy()
         )
@@ -324,7 +332,7 @@ class TestSpatialAcceleration:
         )
         pin_model_obj, pin_data = pin_model_floating
 
-        accel = SpatialAcceleration(bard_chain, max_batch_size=1, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=1, compile_enabled=False)
 
         # Identity base pose with zero velocity/acceleration
         translations = torch.zeros(1, 3, device=device, dtype=dtype)
@@ -339,7 +347,12 @@ class TestSpatialAcceleration:
         frame_idx = bard_chain.get_frame_id(test_frame_name)
         pin_frame_id = pin_model_obj.getFrameId(test_frame_name)
 
-        a_bard = accel.calc(q, qd, qdd, frame_idx, reference_frame="world")[0].cpu().numpy()
+        state = rd.update_kinematics(q, qd)
+        a_bard = (
+            rd.spatial_acceleration(qdd, frame_idx, state, reference_frame="world")[0]
+            .cpu()
+            .numpy()
+        )
 
         q_pin = np.concatenate(
             [
@@ -373,7 +386,7 @@ class TestSpatialAcceleration:
         """Verifies that exceeding max_batch_size raises appropriate error."""
         bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
 
-        accel = SpatialAcceleration(bard_chain, max_batch_size=5, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=5, compile_enabled=False)
 
         frame_name = bard_chain.get_frame_names(exclude_fixed=True)[-1]
         frame_idx = bard_chain.get_frame_id(frame_name)
@@ -382,23 +395,21 @@ class TestSpatialAcceleration:
         q_ok = torch.rand(5, bard_chain.n_joints, device=device, dtype=dtype)
         qd_ok = torch.randn(5, bard_chain.n_joints, device=device, dtype=dtype)
         qdd_ok = torch.randn(5, bard_chain.n_joints, device=device, dtype=dtype)
-        result = accel.calc(q_ok, qd_ok, qdd_ok, frame_idx, reference_frame="world")
+        state = rd.update_kinematics(q_ok, qd_ok)
+        result = rd.spatial_acceleration(qdd_ok, frame_idx, state, reference_frame="world")
         assert result.shape[0] == 5, "Should process 5 samples"
 
         # This should raise ValueError (batch_size = 10, max = 5)
         q_too_large = torch.rand(10, bard_chain.n_joints, device=device, dtype=dtype)
         qd_too_large = torch.randn(10, bard_chain.n_joints, device=device, dtype=dtype)
-        qdd_too_large = torch.randn(10, bard_chain.n_joints, device=device, dtype=dtype)
         with pytest.raises(ValueError, match="exceeds max_batch_size"):
-            _ = accel.calc(
-                q_too_large, qd_too_large, qdd_too_large, frame_idx, reference_frame="world"
-            )
+            _ = rd.update_kinematics(q_too_large, qd_too_large)
 
     def test_world_vs_local_frame_consistency(self, urdf_path, dtype, device):
         """Verifies relationship between world and local frame accelerations."""
         bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
 
-        accel = SpatialAcceleration(bard_chain, max_batch_size=1, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=1, compile_enabled=False)
 
         torch.manual_seed(999)
         q = torch.rand(1, bard_chain.n_joints, device=device, dtype=dtype)
@@ -409,8 +420,9 @@ class TestSpatialAcceleration:
         frame_idx = bard_chain.get_frame_id(frame_name)
 
         # Compute in both frames
-        a_world = accel.calc(q, qd, qdd, frame_idx, reference_frame="world")
-        a_local = accel.calc(q, qd, qdd, frame_idx, reference_frame="local")
+        state = rd.update_kinematics(q, qd)
+        a_world = rd.spatial_acceleration(qdd, frame_idx, state, reference_frame="world")
+        a_local = rd.spatial_acceleration(qdd, frame_idx, state, reference_frame="local")
 
         # They should be different (unless at identity configuration)
         # Just verify both computations complete without error and have correct shape

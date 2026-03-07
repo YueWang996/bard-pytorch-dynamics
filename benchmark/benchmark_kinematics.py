@@ -9,8 +9,7 @@ import torch
 import pinocchio as pin
 from tabulate import tabulate
 
-from bard.parsers.urdf import build_chain_from_urdf
-from bard import ForwardKinematics
+from bard import build_chain_from_urdf, RobotDynamics
 from benchconf import (
     URDF_PATH,
     BATCH_SIZES,
@@ -48,9 +47,9 @@ def generate_random_q(chain, B):
 # ------------------------------
 
 
-def bench_bard(op, q, frame_id, nrep, nwarm):
+def bench_bard(rd, q, frame_id, nrep, nwarm):
     for _ in range(nwarm):
-        _ = op.calc(q, frame_id)
+        _ = rd.fk(q, frame_id)
     if DEVICE == "cuda":
         torch.cuda.synchronize()
     ts = []
@@ -58,7 +57,7 @@ def bench_bard(op, q, frame_id, nrep, nwarm):
         if DEVICE == "cuda":
             torch.cuda.synchronize()
         t0 = time.perf_counter()
-        _ = op.calc(q, frame_id)
+        _ = rd.fk(q, frame_id)
         if DEVICE == "cuda":
             torch.cuda.synchronize()
         ts.append(time.perf_counter() - t0)
@@ -103,8 +102,8 @@ def bench_pin_torch(wrapper, q, frame_id, nrep, nwarm):
 # ------------------------------
 
 
-def verify_short(op, q, bard_fid, pin_fid, pin_model, pin_data, q_pin):
-    T_bard = op.calc(q[:1], bard_fid)[0].detach().cpu().numpy()
+def verify_short(rd, q, bard_fid, pin_fid, pin_model, pin_data, q_pin):
+    T_bard = rd.fk(q[:1], bard_fid)[0].detach().cpu().numpy()
     pin.framesForwardKinematics(pin_model, pin_data, q_pin[0])
     T_pin = pin_data.oMf[pin_fid].homogeneous
     max_diff = float(np.max(np.abs(T_bard - T_pin)))
@@ -124,11 +123,11 @@ def verify_short(op, q, bard_fid, pin_fid, pin_model, pin_data, q_pin):
 
 
 def main():
-    print("Benchmarking ForwardKinematics.calc()")
+    print("Benchmarking RobotDynamics.fk()")
     print("device={} dtype={}".format(DEVICE, DTYPE))
     chain, pin_model, pin_data = load_robot()
     max_batch = max(BATCH_SIZES)
-    op = ForwardKinematics(chain, max_batch_size=max_batch, compile_enabled=(DEVICE == "cuda")).to(
+    rd = RobotDynamics(chain, max_batch_size=max_batch, compile_enabled=(DEVICE == "cuda")).to(
         dtype=DTYPE, device=DEVICE
     )
     test_frame = chain.get_frame_names(exclude_fixed=True)[-1]
@@ -140,12 +139,12 @@ def main():
     for B in BATCH_SIZES:
         q, q_pin = generate_random_q(chain, B)
         if B == BATCH_SIZES[0]:
-            verify_short(op, q, bard_fid, pin_fid, pin_model, pin_data, q_pin)
+            verify_short(rd, q, bard_fid, pin_fid, pin_model, pin_data, q_pin)
 
         wrapper = PinocchioTorchWrapper(pin_model, device=DEVICE, dtype=DTYPE)
 
         print("running batch_size={}...".format(B), end="", flush=True)
-        t_bard = bench_bard(op, q, bard_fid, NUM_REPEATS, WARMUP_ITERS)
+        t_bard = bench_bard(rd, q, bard_fid, NUM_REPEATS, WARMUP_ITERS)
         print(" bard finished({:.2f}ms). ".format(np.mean(t_bard) * 1000.0), end="", flush=True)
         t_pin = bench_pin(pin_model, pin_data, q_pin, pin_fid, NUM_REPEATS, WARMUP_ITERS)
         print(" pinocchio finished({:.2f}ms). ".format(np.mean(t_pin) * 1000.0), end="", flush=True)

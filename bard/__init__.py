@@ -15,6 +15,8 @@ except Exception:
 __author__ = "Yue Wang"
 
 from .core.chain import Chain
+from .core.robot_dynamics import RobotDynamics
+from .core.state import KinematicsState
 from .core.kinematics import ForwardKinematics, SpatialAcceleration
 from .core.jacobian import Jacobian
 from .core.dynamics import RNEA, CRBA
@@ -22,6 +24,8 @@ from .parsers.urdf import build_chain_from_urdf
 
 __all__ = [
     "Chain",
+    "RobotDynamics",
+    "KinematicsState",
     "ForwardKinematics",
     "SpatialAcceleration",
     "Jacobian",

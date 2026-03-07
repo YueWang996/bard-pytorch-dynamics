@@ -16,8 +16,7 @@ import torch
 import numpy as np
 import pinocchio as pin
 
-from bard.parsers.urdf import build_chain_from_urdf
-from bard import Jacobian
+from bard import build_chain_from_urdf, RobotDynamics
 
 
 def compare_jacobians(J_bard, J_pin, dtype):
@@ -83,8 +82,7 @@ class TestJacobian:
         bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model_fixed
 
-        # Create Jacobian instance (without compilation)
-        jac = Jacobian(bard_chain, max_batch_size=1, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=1, compile_enabled=False)
 
         torch.manual_seed(42)
         np.random.seed(42)
@@ -99,7 +97,8 @@ class TestJacobian:
             q = torch.rand(1, bard_chain.n_joints, device=device, dtype=dtype) * np.pi - np.pi / 2
 
             # Bard Jacobian
-            J_bard = jac.calc(q, bard_frame_idx, reference_frame=reference_frame)
+            state = rd.update_kinematics(q)
+            J_bard = rd.jacobian(bard_frame_idx, state, reference_frame=reference_frame)
             J_bard_np = J_bard[0].cpu().numpy()
 
             # Pinocchio Jacobian
@@ -120,8 +119,7 @@ class TestJacobian:
         pin_model_obj, pin_data = pin_model_fixed
         batch_size = 20
 
-        # Create Jacobian instance with appropriate batch size
-        jac = Jacobian(bard_chain, max_batch_size=batch_size, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=batch_size, compile_enabled=False)
 
         torch.manual_seed(100)
         q_batch = torch.rand(batch_size, bard_chain.n_joints, device=device, dtype=dtype) * np.pi
@@ -131,7 +129,8 @@ class TestJacobian:
         pin_frame_id = pin_model_obj.getFrameId(test_frame_name)
 
         # Batched computation (world frame)
-        J_bard_batch = jac.calc(q_batch, bard_frame_idx, reference_frame="world").cpu().numpy()
+        state = rd.update_kinematics(q_batch)
+        J_bard_batch = rd.jacobian(bard_frame_idx, state, reference_frame="world").cpu().numpy()
 
         # Verify each sample against Pinocchio
         for i in range(batch_size):
@@ -149,7 +148,7 @@ class TestJacobian:
         bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model_fixed
 
-        jac = Jacobian(bard_chain, max_batch_size=1, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=1, compile_enabled=False)
 
         q = torch.zeros(1, bard_chain.n_joints, device=device, dtype=dtype)
 
@@ -157,7 +156,8 @@ class TestJacobian:
         frame_idx = bard_chain.get_frame_id(test_frame_name)
         pin_frame_id = pin_model_obj.getFrameId(test_frame_name)
 
-        J_bard = jac.calc(q, frame_idx, reference_frame="world")[0].cpu().numpy()
+        state = rd.update_kinematics(q)
+        J_bard = rd.jacobian(frame_idx, state, reference_frame="world")[0].cpu().numpy()
 
         q_pin = q[0].cpu().numpy()
         pin.computeJointJacobians(pin_model_obj, pin_data, q_pin)
@@ -173,7 +173,7 @@ class TestJacobian:
         bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
         pin_model_obj, pin_data = pin_model_fixed
 
-        jac = Jacobian(bard_chain, max_batch_size=1, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=1, compile_enabled=False)
 
         torch.manual_seed(200)
         q = torch.rand(1, bard_chain.n_joints, device=device, dtype=dtype)
@@ -183,7 +183,10 @@ class TestJacobian:
         pin_frame_id = pin_model_obj.getFrameId(test_frame_name)
 
         # With pose return
-        J_bard, T_bard = jac.calc(q, frame_idx, reference_frame="world", return_eef_pose=True)
+        state = rd.update_kinematics(q)
+        J_bard, T_bard = rd.jacobian(
+            frame_idx, state, reference_frame="world", return_eef_pose=True
+        )
         J_bard_np = J_bard[0].cpu().numpy()
         T_bard_np = T_bard[0].cpu().numpy()
 
@@ -225,8 +228,7 @@ class TestJacobian:
         )
         pin_model_obj, pin_data = pin_model_floating
 
-        # Create Jacobian instance
-        jac = Jacobian(bard_chain, max_batch_size=1, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=1, compile_enabled=False)
 
         torch.manual_seed(123)
         np.random.seed(123)
@@ -246,7 +248,8 @@ class TestJacobian:
             q = torch.cat([translations, quats_wxyz, q_joints], dim=1)
 
             # Bard Jacobian
-            J_bard = jac.calc(q, bard_frame_idx, reference_frame=reference_frame)
+            state = rd.update_kinematics(q)
+            J_bard = rd.jacobian(bard_frame_idx, state, reference_frame=reference_frame)
             J_bard_np = J_bard[0].cpu().numpy()
 
             # Convert to Pinocchio format
@@ -277,8 +280,7 @@ class TestJacobian:
         pin_model_obj, pin_data = pin_model_floating
         batch_size = 20
 
-        # Create Jacobian instance
-        jac = Jacobian(bard_chain, max_batch_size=batch_size, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=batch_size, compile_enabled=False)
 
         torch.manual_seed(456)
 
@@ -294,7 +296,8 @@ class TestJacobian:
         pin_frame_id = pin_model_obj.getFrameId(test_frame_name)
 
         # Batched computation
-        J_bard_batch = jac.calc(q_batch, bard_frame_idx, reference_frame="world").cpu().numpy()
+        state = rd.update_kinematics(q_batch)
+        J_bard_batch = rd.jacobian(bard_frame_idx, state, reference_frame="world").cpu().numpy()
 
         # Verify each sample
         for i in range(batch_size):
@@ -320,7 +323,7 @@ class TestJacobian:
         )
         pin_model_obj, pin_data = pin_model_floating
 
-        jac = Jacobian(bard_chain, max_batch_size=1, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=1, compile_enabled=False)
 
         # Identity base pose with random joints
         translations = torch.zeros(1, 3, device=device, dtype=dtype)
@@ -332,7 +335,8 @@ class TestJacobian:
         frame_idx = bard_chain.get_frame_id(test_frame_name)
         pin_frame_id = pin_model_obj.getFrameId(test_frame_name)
 
-        J_bard = jac.calc(q, frame_idx, reference_frame="world")[0].cpu().numpy()
+        state = rd.update_kinematics(q)
+        J_bard = rd.jacobian(frame_idx, state, reference_frame="world")[0].cpu().numpy()
 
         q_pin = np.concatenate(
             [
@@ -356,7 +360,7 @@ class TestJacobian:
         )
         pin_model_obj, pin_data = pin_model_floating
 
-        jac = Jacobian(bard_chain, max_batch_size=1, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=1, compile_enabled=False)
 
         torch.manual_seed(789)
         translations = torch.randn(1, 3, device=device, dtype=dtype)
@@ -370,7 +374,10 @@ class TestJacobian:
         pin_frame_id = pin_model_obj.getFrameId(test_frame_name)
 
         # With pose return
-        J_bard, T_bard = jac.calc(q, frame_idx, reference_frame="world", return_eef_pose=True)
+        state = rd.update_kinematics(q)
+        J_bard, T_bard = rd.jacobian(
+            frame_idx, state, reference_frame="world", return_eef_pose=True
+        )
         J_bard_np = J_bard[0].cpu().numpy()
         T_bard_np = T_bard[0].cpu().numpy()
 
@@ -406,27 +413,28 @@ class TestJacobian:
         """Verifies that exceeding max_batch_size raises appropriate error."""
         bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
 
-        jac = Jacobian(bard_chain, max_batch_size=5, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=5, compile_enabled=False)
 
         frame_name = bard_chain.get_frame_names(exclude_fixed=True)[-1]
         frame_idx = bard_chain.get_frame_id(frame_name)
 
         # This should work (batch_size = 5, max = 5)
         q_ok = torch.rand(5, bard_chain.n_joints, device=device, dtype=dtype)
-        result = jac.calc(q_ok, frame_idx, reference_frame="world")
+        state = rd.update_kinematics(q_ok)
+        result = rd.jacobian(frame_idx, state, reference_frame="world")
         assert result.shape[0] == 5, "Should process 5 samples"
 
         # This should raise ValueError (batch_size = 10, max = 5)
         q_too_large = torch.rand(10, bard_chain.n_joints, device=device, dtype=dtype)
         with pytest.raises(ValueError, match="exceeds max_batch_size"):
-            _ = jac.calc(q_too_large, frame_idx, reference_frame="world")
+            _ = rd.update_kinematics(q_too_large)
 
     def test_single_vs_batch_consistency(self, urdf_path, dtype, device):
         """Verifies that single and batched queries produce consistent results."""
         bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
 
-        jac_single = Jacobian(bard_chain, max_batch_size=1, compile_enabled=False)
-        jac_batch = Jacobian(bard_chain, max_batch_size=10, compile_enabled=False)
+        rd_single = RobotDynamics(bard_chain, max_batch_size=1, compile_enabled=False)
+        rd_batch = RobotDynamics(bard_chain, max_batch_size=10, compile_enabled=False)
 
         torch.manual_seed(500)
         q_single = torch.rand(1, bard_chain.n_joints, device=device, dtype=dtype)
@@ -435,8 +443,10 @@ class TestJacobian:
         frame_name = bard_chain.get_frame_names(exclude_fixed=True)[-1]
         frame_idx = bard_chain.get_frame_id(frame_name)
 
-        J_single = jac_single.calc(q_single, frame_idx, reference_frame="world")
-        J_batch = jac_batch.calc(q_batch, frame_idx, reference_frame="world")
+        state_single = rd_single.update_kinematics(q_single)
+        J_single = rd_single.jacobian(frame_idx, state_single, reference_frame="world")
+        state_batch = rd_batch.update_kinematics(q_batch)
+        J_batch = rd_batch.jacobian(frame_idx, state_batch, reference_frame="world")
 
         # All batch results should match the single result
         for i in range(10):
@@ -449,7 +459,7 @@ class TestJacobian:
         """Verifies that world and local Jacobians have consistent shapes."""
         bard_chain = build_chain_from_urdf(urdf_path).to(dtype=dtype, device=device)
 
-        jac = Jacobian(bard_chain, max_batch_size=1, compile_enabled=False)
+        rd = RobotDynamics(bard_chain, max_batch_size=1, compile_enabled=False)
 
         torch.manual_seed(999)
         q = torch.rand(1, bard_chain.n_joints, device=device, dtype=dtype)
@@ -458,8 +468,9 @@ class TestJacobian:
         frame_idx = bard_chain.get_frame_id(frame_name)
 
         # Compute in both frames
-        J_world = jac.calc(q, frame_idx, reference_frame="world")
-        J_local = jac.calc(q, frame_idx, reference_frame="local")
+        state = rd.update_kinematics(q)
+        J_world = rd.jacobian(frame_idx, state, reference_frame="world")
+        J_local = rd.jacobian(frame_idx, state, reference_frame="local")
 
         # Should have same shape
         assert (

@@ -9,8 +9,7 @@ import torch
 import pinocchio as pin
 from tabulate import tabulate
 
-from bard.parsers.urdf import build_chain_from_urdf
-from bard import CRBA
+from bard import build_chain_from_urdf, RobotDynamics
 from benchconf import (
     URDF_PATH,
     BATCH_SIZES,
@@ -49,9 +48,10 @@ def generate_random_q(chain, B):
 # ------------------------------
 
 
-def bench_bard(op, q, nrep, nwarm):
+def bench_bard(rd, q, nrep, nwarm):
     for _ in range(nwarm):
-        _ = op.calc(q)
+        state = rd.update_kinematics(q)
+        _ = rd.crba(state)
     if DEVICE == "cuda":
         torch.cuda.synchronize()
     ts = []
@@ -59,7 +59,8 @@ def bench_bard(op, q, nrep, nwarm):
         if DEVICE == "cuda":
             torch.cuda.synchronize()
         t0 = time.perf_counter()
-        _ = op.calc(q)
+        state = rd.update_kinematics(q)
+        _ = rd.crba(state)
         if DEVICE == "cuda":
             torch.cuda.synchronize()
         ts.append(time.perf_counter() - t0)
@@ -102,8 +103,9 @@ def bench_pin_torch(wrapper, q, nrep, nwarm):
 # ------------------------------
 
 
-def verify_short(crba, q, pin_model, pin_data, q_pin):
-    M_bard = crba.calc(q[:1])[0].detach().cpu().numpy()
+def verify_short(rd, q, pin_model, pin_data, q_pin):
+    state = rd.update_kinematics(q[:1])
+    M_bard = rd.crba(state)[0].detach().cpu().numpy()
     M_pin = pin.crba(pin_model, pin_data, q_pin[0])
     M_pin = np.triu(M_pin) + np.triu(M_pin, 1).T
     max_diff = float(np.max(np.abs(M_bard - M_pin)))
@@ -123,11 +125,11 @@ def verify_short(crba, q, pin_model, pin_data, q_pin):
 
 
 def main():
-    print("Benchmarking CRBA.calc()")
+    print("Benchmarking RobotDynamics.crba()")
     print("device={} dtype={}".format(DEVICE, DTYPE))
     chain, pin_model, pin_data = load_robot()
     max_batch = max(BATCH_SIZES)
-    op = CRBA(chain, max_batch_size=max_batch, compile_enabled=(DEVICE == "cuda")).to(
+    rd = RobotDynamics(chain, max_batch_size=max_batch, compile_enabled=(DEVICE == "cuda")).to(
         dtype=DTYPE, device=DEVICE
     )
     print("crba nv={}".format(chain.nv))
@@ -136,12 +138,12 @@ def main():
     for B in BATCH_SIZES:
         q, q_pin = generate_random_q(chain, B)
         if B == BATCH_SIZES[0]:
-            verify_short(op, q, pin_model, pin_data, q_pin)
+            verify_short(rd, q, pin_model, pin_data, q_pin)
 
         wrapper = PinocchioTorchWrapper(pin_model, device=DEVICE, dtype=DTYPE)
 
         print("running batch_size={}...".format(B), end="", flush=True)
-        t_bard = bench_bard(op, q, NUM_REPEATS, WARMUP_ITERS)
+        t_bard = bench_bard(rd, q, NUM_REPEATS, WARMUP_ITERS)
         print(" bard finished({:.2f}ms). ".format(np.mean(t_bard) * 1000.0), end="", flush=True)
         t_pin = bench_pin(pin_model, pin_data, q_pin, NUM_REPEATS, WARMUP_ITERS)
         print(" pinocchio finished({:.2f}ms). ".format(np.mean(t_pin) * 1000.0), end="", flush=True)

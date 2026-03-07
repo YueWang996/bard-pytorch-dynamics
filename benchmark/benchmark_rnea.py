@@ -9,8 +9,7 @@ import torch
 import pinocchio as pin
 from tabulate import tabulate
 
-from bard.parsers.urdf import build_chain_from_urdf
-from bard import RNEA
+from bard import build_chain_from_urdf, RobotDynamics
 from benchconf import (
     URDF_PATH,
     BATCH_SIZES,
@@ -50,9 +49,10 @@ def generate_random_state(chain, B):
 # ------------------------------
 
 
-def bench_bard(op, q, qd, qdd, nrep, nwarm):
+def bench_bard(rd, q, qd, qdd, nrep, nwarm):
     for _ in range(nwarm):
-        _ = op.calc(q, qd, qdd)
+        state = rd.update_kinematics(q, qd)
+        _ = rd.rnea(qdd, state)
     if DEVICE == "cuda":
         torch.cuda.synchronize()
     ts = []
@@ -60,7 +60,8 @@ def bench_bard(op, q, qd, qdd, nrep, nwarm):
         if DEVICE == "cuda":
             torch.cuda.synchronize()
         t0 = time.perf_counter()
-        _ = op.calc(q, qd, qdd)
+        state = rd.update_kinematics(q, qd)
+        _ = rd.rnea(qdd, state)
         if DEVICE == "cuda":
             torch.cuda.synchronize()
         ts.append(time.perf_counter() - t0)
@@ -105,8 +106,9 @@ def bench_pin_torch(wrapper, q, qd, qdd, nrep, nwarm):
 # ------------------------------
 
 
-def verify_short(op, q, qd, qdd, pin_model, pin_data, q_pin):
-    tau_bard = op.calc(q[:1], qd[:1], qdd[:1])[0].detach().cpu().numpy()
+def verify_short(rd, q, qd, qdd, pin_model, pin_data, q_pin):
+    state = rd.update_kinematics(q[:1], qd[:1])
+    tau_bard = rd.rnea(qdd[:1], state)[0].detach().cpu().numpy()
     qd0 = qd[:1].detach().cpu().numpy()[0]
     qdd0 = qdd[:1].detach().cpu().numpy()[0]
     tau_pin = pin.rnea(pin_model, pin_data, q_pin[0], qd0, qdd0)
@@ -127,11 +129,11 @@ def verify_short(op, q, qd, qdd, pin_model, pin_data, q_pin):
 
 
 def main():
-    print("Benchmarking RNEA.calc()")
+    print("Benchmarking RobotDynamics.rnea()")
     print("device={} dtype={}".format(DEVICE, DTYPE))
     chain, pin_model, pin_data = load_robot()
     max_batch = max(BATCH_SIZES)
-    op = RNEA(chain, max_batch_size=max_batch, compile_enabled=(DEVICE == "cuda")).to(
+    rd = RobotDynamics(chain, max_batch_size=max_batch, compile_enabled=(DEVICE == "cuda")).to(
         dtype=DTYPE, device=DEVICE
     )
     print("rnea nv={}".format(chain.nv))
@@ -140,18 +142,14 @@ def main():
     for B in BATCH_SIZES:
         q, qd, qdd, q_pin = generate_random_state(chain, B)
         if B == BATCH_SIZES[0]:
-            verify_short(op, q, qd, qdd, pin_model, pin_data, q_pin)
+            verify_short(rd, q, qd, qdd, pin_model, pin_data, q_pin)
 
         wrapper = PinocchioTorchWrapper(pin_model, device=DEVICE, dtype=DTYPE)
 
         print("running batch_size={}...".format(B), end="", flush=True)
-        t_bard = bench_bard(op, q, qd, qdd, NUM_REPEATS, WARMUP_ITERS)
+        t_bard = bench_bard(rd, q, qd, qdd, NUM_REPEATS, WARMUP_ITERS)
         print(" bard finished({:.2f}ms). ".format(np.mean(t_bard) * 1000.0), end="", flush=True)
-        t_pin = (
-            bench_pin(pin_model, pin_data, q_pin, q, qd)
-            if False
-            else bench_pin(pin_model, pin_data, q_pin, qd, qdd, NUM_REPEATS, WARMUP_ITERS)
-        )
+        t_pin = bench_pin(pin_model, pin_data, q_pin, qd, qdd, NUM_REPEATS, WARMUP_ITERS)
         print(" pinocchio finished({:.2f}ms). ".format(np.mean(t_pin) * 1000.0), end="", flush=True)
         t_pyt = bench_pin_torch(wrapper, q, qd, qdd, NUM_REPEATS, WARMUP_ITERS)
         print(" pinocchio-torch finished({:.2f}ms).".format(np.mean(t_pyt) * 1000.0))
