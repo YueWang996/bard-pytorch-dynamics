@@ -14,7 +14,11 @@ import warnings
 import pytest
 import torch
 import numpy as np
-import pinocchio as pin
+
+try:
+    import pinocchio as pin
+except ImportError:
+    pin = None
 
 import bard
 

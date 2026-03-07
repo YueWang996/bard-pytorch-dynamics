@@ -12,7 +12,11 @@ Tests:
 
 import os
 import numpy as np
-import pinocchio as pin
+
+try:
+    import pinocchio as pin
+except ImportError:
+    pin = None
 
 # Path to URDF
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -198,6 +202,11 @@ def print_model_info():
 
 
 if __name__ == "__main__":
+    if pin is None:
+        raise SystemExit(
+            "This script requires pinocchio. "
+            "Install it with: conda install -c conda-forge pinocchio"
+        )
     print("\n" + "=" * 60)
     print("  Pinocchio Verification Test for spine.urdf")
     print("  (Mirrors C Library Test Cases)")
