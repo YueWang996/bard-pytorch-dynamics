@@ -2,8 +2,12 @@
 
 [![CI](https://github.com/YueWang996/bard/actions/workflows/ci.yml/badge.svg)](https://github.com/YueWang996/bard/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Version](https://img.shields.io/badge/version-0.3-blue.svg)](https://github.com/YueWang996/bard)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17291122.svg)](https://doi.org/10.5281/zenodo.17291122)
 
+<p align="center">
+  <img src="cover.png" alt="bard cover" width="800"/>
+</p>
 
 `bard` is a lightweight, PyTorch-native library for rigid-body dynamics that leverages tensor operations to perform efficient, batched computations on either the CPU or GPU. It provides a simple yet powerful API for loading robots from URDF files and analyzing their motion using standard robotics algorithms.
 
