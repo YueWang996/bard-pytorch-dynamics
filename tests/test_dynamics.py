@@ -431,7 +431,49 @@ class TestDynamics:
         ), f"Mass matrix is not positive definite: min eigenvalue = {min_eigenvalue:.3e}"
 
     def test_rnea_with_compilation(self, urdf_path, pin_model_fixed, dtype, device):
-        pytest.skip("Placeholder test - compilation tests is to be implemented")
+        """Verifies that RNEA works correctly with torch.compile enabled."""
+        if device == "cpu":
+            pytest.skip("torch.compile inductor backend requires CUDA on Windows")
+        model = bard.build_model_from_urdf(urdf_path).to(dtype=dtype, device=device)
+        data = bard.create_data(model, max_batch_size=5)
+
+        torch.manual_seed(55)
+        q = torch.rand(5, model.n_joints, device=device, dtype=dtype) * np.pi - np.pi / 2
+        qd = torch.randn(5, model.nv, device=device, dtype=dtype)
+        qdd = torch.randn(5, model.nv, device=device, dtype=dtype)
+
+        bard.update_kinematics(model, data, q, qd)
+        tau_ref = bard.rnea(model, data, qdd).clone()
+
+        model.enable_compilation(True)
+        data_compiled = bard.create_data(model, max_batch_size=5)
+        bard.update_kinematics(model, data_compiled, q, qd)
+        tau_compiled = bard.rnea(model, data_compiled, qdd)
+
+        tol = 1e-4 if dtype == torch.float32 else 1e-10
+        assert torch.allclose(tau_ref, tau_compiled, atol=tol), (
+            f"Compiled RNEA differs: max diff = " f"{(tau_ref - tau_compiled).abs().max():.3e}"
+        )
 
     def test_crba_with_compilation(self, urdf_path, pin_model_fixed, dtype, device):
-        pytest.skip("Placeholder test - compilation tests is to be implemented")
+        """Verifies that CRBA works correctly with torch.compile enabled."""
+        if device == "cpu":
+            pytest.skip("torch.compile inductor backend requires CUDA on Windows")
+        model = bard.build_model_from_urdf(urdf_path).to(dtype=dtype, device=device)
+        data = bard.create_data(model, max_batch_size=5)
+
+        torch.manual_seed(66)
+        q = torch.rand(5, model.n_joints, device=device, dtype=dtype) * np.pi - np.pi / 2
+
+        bard.update_kinematics(model, data, q)
+        M_ref = bard.crba(model, data).clone()
+
+        model.enable_compilation(True)
+        data_compiled = bard.create_data(model, max_batch_size=5)
+        bard.update_kinematics(model, data_compiled, q)
+        M_compiled = bard.crba(model, data_compiled)
+
+        tol = 1e-4 if dtype == torch.float32 else 1e-10
+        assert torch.allclose(M_ref, M_compiled, atol=tol), (
+            f"Compiled CRBA differs: max diff = " f"{(M_ref - M_compiled).abs().max():.3e}"
+        )

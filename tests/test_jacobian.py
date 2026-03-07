@@ -188,7 +188,27 @@ class TestJacobian:
 
     def test_fixed_base_with_compilation(self, urdf_path, pin_model_fixed, dtype, device):
         """Verifies that Jacobian works correctly with torch.compile enabled."""
-        pytest.skip("Compilation tests temporarily disabled due to torch.compile issues")
+        if device == "cpu":
+            pytest.skip("torch.compile inductor backend requires CUDA on Windows")
+        model = bard.build_model_from_urdf(urdf_path).to(dtype=dtype, device=device)
+        data = bard.create_data(model, max_batch_size=5)
+
+        torch.manual_seed(77)
+        q = torch.rand(5, model.n_joints, device=device, dtype=dtype) * np.pi - np.pi / 2
+        frame_idx = model.get_frame_id(model.get_frame_names(exclude_fixed=True)[-1])
+
+        bard.update_kinematics(model, data, q)
+        J_ref = bard.jacobian(model, data, frame_idx, reference_frame="world").clone()
+
+        model.enable_compilation(True)
+        data_compiled = bard.create_data(model, max_batch_size=5)
+        bard.update_kinematics(model, data_compiled, q)
+        J_compiled = bard.jacobian(model, data_compiled, frame_idx, reference_frame="world")
+
+        tol = 1e-5 if dtype == torch.float32 else 1e-10
+        assert torch.allclose(J_ref, J_compiled, atol=tol), (
+            f"Compiled Jacobian differs: max diff = " f"{(J_ref - J_compiled).abs().max():.3e}"
+        )
 
     # ========================================================================
     # Floating-Base Tests
@@ -369,7 +389,35 @@ class TestJacobian:
 
     def test_floating_base_with_compilation(self, urdf_path, pin_model_floating, dtype, device):
         """Verifies that floating-base Jacobian works correctly with torch.compile enabled."""
-        pytest.skip("Compilation tests temporarily disabled due to torch.compile issues")
+        if device == "cpu":
+            pytest.skip("torch.compile inductor backend requires CUDA on Windows")
+        model = bard.build_model_from_urdf(urdf_path, floating_base=True).to(
+            dtype=dtype, device=device
+        )
+        data = bard.create_data(model, max_batch_size=5)
+
+        torch.manual_seed(88)
+        translations = torch.randn(5, 3, device=device, dtype=dtype)
+        quats = torch.randn(5, 4, device=device, dtype=dtype)
+        quats = quats / torch.linalg.norm(quats, dim=1, keepdim=True)
+        q_joints = torch.rand(5, model.n_joints, device=device, dtype=dtype) * np.pi
+        q = torch.cat([translations, quats, q_joints], dim=1)
+
+        frame_idx = model.get_frame_id(model.get_frame_names(exclude_fixed=True)[-1])
+
+        bard.update_kinematics(model, data, q)
+        J_ref = bard.jacobian(model, data, frame_idx, reference_frame="world").clone()
+
+        model.enable_compilation(True)
+        data_compiled = bard.create_data(model, max_batch_size=5)
+        bard.update_kinematics(model, data_compiled, q)
+        J_compiled = bard.jacobian(model, data_compiled, frame_idx, reference_frame="world")
+
+        tol = 1e-5 if dtype == torch.float32 else 1e-10
+        assert torch.allclose(J_ref, J_compiled, atol=tol), (
+            f"Compiled floating-base Jacobian differs: max diff = "
+            f"{(J_ref - J_compiled).abs().max():.3e}"
+        )
 
     # ========================================================================
     # Edge Cases and Stress Tests

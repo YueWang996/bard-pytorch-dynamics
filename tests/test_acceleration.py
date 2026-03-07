@@ -164,7 +164,35 @@ class TestSpatialAcceleration:
         assert np.allclose(a_bard, 0.0, atol=1e-10), "Acceleration should be near zero"
 
     def test_fixed_base_with_compilation(self, urdf_path, pin_model_fixed, dtype, device):
-        pytest.skip("Placeholder test - compilation tests is to be implemented")
+        """Verifies that spatial acceleration works with torch.compile enabled."""
+        if device == "cpu":
+            pytest.skip("torch.compile inductor backend requires CUDA on Windows")
+        model = bard.build_model_from_urdf(urdf_path).to(dtype=dtype, device=device)
+        data = bard.create_data(model, max_batch_size=5)
+
+        torch.manual_seed(44)
+        q = torch.rand(5, model.n_joints, device=device, dtype=dtype) * np.pi - np.pi / 2
+        qd = torch.randn(5, model.nv, device=device, dtype=dtype)
+        qdd = torch.randn(5, model.nv, device=device, dtype=dtype)
+        frame_idx = model.get_frame_id(model.get_frame_names(exclude_fixed=True)[-1])
+
+        bard.update_kinematics(model, data, q, qd)
+        a_ref = bard.spatial_acceleration(
+            model, data, qdd, frame_idx, reference_frame="world"
+        ).clone()
+
+        model.enable_compilation(True)
+        data_compiled = bard.create_data(model, max_batch_size=5)
+        bard.update_kinematics(model, data_compiled, q, qd)
+        a_compiled = bard.spatial_acceleration(
+            model, data_compiled, qdd, frame_idx, reference_frame="world"
+        )
+
+        tol = 1e-4 if dtype == torch.float32 else 1e-10
+        assert torch.allclose(a_ref, a_compiled, atol=tol), (
+            f"Compiled spatial acceleration differs: max diff = "
+            f"{(a_ref - a_compiled).abs().max():.3e}"
+        )
 
     # ========================================================================
     # Floating-Base Tests
@@ -335,7 +363,41 @@ class TestSpatialAcceleration:
         assert np.allclose(a_bard, 0.0, atol=1e-10), "Stationary acceleration should be near zero"
 
     def test_floating_base_with_compilation(self, urdf_path, pin_model_floating, dtype, device):
-        pytest.skip("Placeholder test - compilation tests is to be implemented")
+        """Verifies that floating-base spatial acceleration works with torch.compile enabled."""
+        if device == "cpu":
+            pytest.skip("torch.compile inductor backend requires CUDA on Windows")
+        model = bard.build_model_from_urdf(urdf_path, floating_base=True).to(
+            dtype=dtype, device=device
+        )
+        data = bard.create_data(model, max_batch_size=5)
+
+        torch.manual_seed(45)
+        translations = torch.randn(5, 3, device=device, dtype=dtype)
+        quats = torch.randn(5, 4, device=device, dtype=dtype)
+        quats = quats / torch.linalg.norm(quats, dim=1, keepdim=True)
+        q_joints = torch.rand(5, model.n_joints, device=device, dtype=dtype) * np.pi
+        q = torch.cat([translations, quats, q_joints], dim=1)
+        qd = torch.randn(5, model.nv, device=device, dtype=dtype)
+        qdd = torch.randn(5, model.nv, device=device, dtype=dtype)
+        frame_idx = model.get_frame_id(model.get_frame_names(exclude_fixed=True)[-1])
+
+        bard.update_kinematics(model, data, q, qd)
+        a_ref = bard.spatial_acceleration(
+            model, data, qdd, frame_idx, reference_frame="world"
+        ).clone()
+
+        model.enable_compilation(True)
+        data_compiled = bard.create_data(model, max_batch_size=5)
+        bard.update_kinematics(model, data_compiled, q, qd)
+        a_compiled = bard.spatial_acceleration(
+            model, data_compiled, qdd, frame_idx, reference_frame="world"
+        )
+
+        tol = 1e-4 if dtype == torch.float32 else 1e-10
+        assert torch.allclose(a_ref, a_compiled, atol=tol), (
+            f"Compiled floating-base spatial acceleration differs: max diff = "
+            f"{(a_ref - a_compiled).abs().max():.3e}"
+        )
 
     # ========================================================================
     # Edge Cases and Stress Tests
