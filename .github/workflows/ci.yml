@@ -54,9 +54,18 @@ jobs:
         run: |
           pip install --retries 5 --timeout 120 -e ".[dev,cpu]"
 
+      - name: Diagnose environment
+        shell: bash -l {0}
+        run: |
+          python --version
+          python -c "import torch; print('torch', torch.__version__)"
+          python -c "import bard; print('bard OK')"
+          python -c "import pinocchio; print('pinocchio OK')" || echo "pinocchio import FAILED"
+          python -m pytest --collect-only 2>&1 | head -50 || true
+
       - name: Run pytest
         shell: bash -l {0}
-        run: python -m pytest
+        run: python -m pytest -v --tb=long
 
   # ------------------ JOB 3: Build the documentation ------------------
   build-docs:
