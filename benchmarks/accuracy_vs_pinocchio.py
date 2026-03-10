@@ -100,13 +100,15 @@ def generate_random_configs(bard_model, pin_model, n_samples, floating_base):
         qdd = np.random.randn(nv) * 2.0
         tau = np.random.randn(nv) * 10.0
 
-        configs.append({
-            "q_bard": q_bard,
-            "q_pin": q_pin,
-            "qd": qd,
-            "qdd": qdd,
-            "tau": tau,
-        })
+        configs.append(
+            {
+                "q_bard": q_bard,
+                "q_pin": q_pin,
+                "qd": qd,
+                "qdd": qdd,
+                "tau": tau,
+            }
+        )
     return configs
 
 
@@ -120,9 +122,9 @@ def run_accuracy_test(robot_name, robot_info, n_samples, dtype):
         return None
 
     # Load models
-    bard_model = bard.build_model_from_urdf(
-        str(urdf_path), floating_base=floating_base
-    ).to(dtype=dtype, device="cpu")
+    bard_model = bard.build_model_from_urdf(str(urdf_path), floating_base=floating_base).to(
+        dtype=dtype, device="cpu"
+    )
     bard_data = bard.create_data(bard_model, max_batch_size=1)
 
     if floating_base:
@@ -210,7 +212,9 @@ def print_results_table(all_results, dtype):
     print(f"{'=' * 80}")
 
     algorithms = ["FK", "Jacobian", "RNEA", "CRBA", "ABA"]
-    headers = ["Algorithm"] + [info["label"] for name, info in ROBOT_REGISTRY.items() if name in all_results]
+    headers = ["Algorithm"] + [
+        info["label"] for name, info in ROBOT_REGISTRY.items() if name in all_results
+    ]
     rows = []
 
     for algo in algorithms:
@@ -267,7 +271,9 @@ def main():
         choices=list(ROBOT_REGISTRY.keys()),
         help="Robot models to test",
     )
-    parser.add_argument("--n-samples", type=int, default=100, help="Number of random samples per robot")
+    parser.add_argument(
+        "--n-samples", type=int, default=100, help="Number of random samples per robot"
+    )
     parser.add_argument(
         "--dtype",
         choices=["float32", "float64", "both"],
@@ -294,7 +300,9 @@ def main():
         for robot_name in args.robots:
             robot_info = ROBOT_REGISTRY[robot_name]
             print(f"\n  Testing {robot_info['label']}...")
-            all_results[robot_name] = run_accuracy_test(robot_name, robot_info, args.n_samples, dtype)
+            all_results[robot_name] = run_accuracy_test(
+                robot_name, robot_info, args.n_samples, dtype
+            )
 
         print_results_table(all_results, dtype)
 

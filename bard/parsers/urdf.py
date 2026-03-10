@@ -30,7 +30,9 @@ def _convert_transform(origin):
     if origin is None:
         return tf.Transform3d(dtype=torch.float64)
     rpy = torch.tensor(origin.rpy, dtype=torch.float64, device="cpu")
-    return tf.Transform3d(dtype=torch.float64, rot=tf.quaternion_from_euler(rpy, "sxyz"), pos=origin.xyz)
+    return tf.Transform3d(
+        dtype=torch.float64, rot=tf.quaternion_from_euler(rpy, "sxyz"), pos=origin.xyz
+    )
 
 
 def _convert_inertial(inertial):

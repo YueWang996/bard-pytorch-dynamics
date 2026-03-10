@@ -194,7 +194,15 @@ def plot_all_robots_single_algo(data, algo, output_dir):
                 bs_list.append(B)
 
         label = ROBOT_LABELS.get(robot, robot)
-        ax.plot(bs_list, speedups, marker="o", markersize=5, label=label, color=robot_colors[idx], linewidth=2)
+        ax.plot(
+            bs_list,
+            speedups,
+            marker="o",
+            markersize=5,
+            label=label,
+            color=robot_colors[idx],
+            linewidth=2,
+        )
 
     ax.axhline(y=1.0, color="gray", linestyle=":", alpha=0.5, label="Break-even")
     ax.set_xscale("log")
@@ -214,7 +222,9 @@ def main():
     parser = argparse.ArgumentParser(description="Plot benchmark results")
     parser.add_argument("--input", type=str, default=None, help="Path to .npz file")
     parser.add_argument("--robots", nargs="+", default=None, help="Filter robots")
-    parser.add_argument("--target-batch", type=int, default=4096, help="Batch size for speedup table")
+    parser.add_argument(
+        "--target-batch", type=int, default=4096, help="Batch size for speedup table"
+    )
     args = parser.parse_args()
 
     # Find .npz file

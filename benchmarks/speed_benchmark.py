@@ -162,7 +162,8 @@ def bench_robot(robot_name, robot_info, device, dtype, batch_sizes, n_repeats):
 
         t_bard = time_fn(
             lambda: bard.forward_kinematics(bard_model, bard_data, bard_fid, q=q),
-            n_repeats, device,
+            n_repeats,
+            device,
         )
 
         def pin_fk():
@@ -178,7 +179,8 @@ def bench_robot(robot_name, robot_info, device, dtype, batch_sizes, n_repeats):
 
         t_bard = time_fn(
             lambda: bard.jacobian(bard_model, bard_data, bard_fid),
-            n_repeats, device,
+            n_repeats,
+            device,
         )
 
         def pin_jac():
@@ -196,7 +198,8 @@ def bench_robot(robot_name, robot_info, device, dtype, batch_sizes, n_repeats):
 
         t_bard = time_fn(
             lambda: bard.rnea(bard_model, bard_data, qdd),
-            n_repeats, device,
+            n_repeats,
+            device,
         )
 
         def pin_rnea():
@@ -212,7 +215,8 @@ def bench_robot(robot_name, robot_info, device, dtype, batch_sizes, n_repeats):
 
         t_bard = time_fn(
             lambda: bard.crba(bard_model, bard_data),
-            n_repeats, device,
+            n_repeats,
+            device,
         )
 
         def pin_crba():
@@ -228,7 +232,8 @@ def bench_robot(robot_name, robot_info, device, dtype, batch_sizes, n_repeats):
 
         t_bard = time_fn(
             lambda: bard.aba(bard_model, bard_data, tau),
-            n_repeats, device,
+            n_repeats,
+            device,
         )
 
         def pin_aba():
@@ -289,14 +294,16 @@ def print_summary_table(robot_name, robot_info, results, batch_sizes, device):
             tp_pin = B / (t_pin_mean / 1000) if t_pin_mean > 0 else float("inf")
             speedup = t_pin_mean / t_bard_mean if t_bard_mean > 0 else float("inf")
 
-            rows.append([
-                B,
-                f"{t_bard_mean:.3f}",
-                f"{t_pin_mean:.3f}",
-                f"{tp_bard:.0f} s/s",
-                f"{tp_pin:.0f} s/s",
-                f"{speedup:.1f}x",
-            ])
+            rows.append(
+                [
+                    B,
+                    f"{t_bard_mean:.3f}",
+                    f"{t_pin_mean:.3f}",
+                    f"{tp_bard:.0f} s/s",
+                    f"{tp_pin:.0f} s/s",
+                    f"{speedup:.1f}x",
+                ]
+            )
         print(tabulate(rows, headers=headers, tablefmt="grid"))
 
 
@@ -366,7 +373,9 @@ def main():
         print(f"Benchmarking {robot_info['label']}...")
         print(f"{'=' * 60}")
 
-        results = bench_robot(robot_name, robot_info, device, dtype, args.batch_sizes, args.n_repeats)
+        results = bench_robot(
+            robot_name, robot_info, device, dtype, args.batch_sizes, args.n_repeats
+        )
         all_results[robot_name] = results
 
         if results is not None:
