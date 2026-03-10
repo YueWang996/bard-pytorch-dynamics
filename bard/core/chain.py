@@ -234,7 +234,13 @@ class Chain:
                 dim=-2,
             )
 
-        I_spatial = torch.zeros((n_nodes, 6, 6), dtype=self.dtype, device=self.device)
+        # Always compute spatial inertias in float64 to preserve URDF precision,
+        # then cast to self.dtype at the end. This avoids float32 truncation of
+        # parsed inertia parameters that would otherwise cause ~1e-6 errors in
+        # dynamics algorithms (RNEA, ABA) when compared to Pinocchio.
+        compute_dtype = torch.float64
+
+        I_spatial = torch.zeros((n_nodes, 6, 6), dtype=compute_dtype, device=self.device)
 
         for node_idx in range(n_nodes):
             frame_name = self.idx_to_frame[node_idx]
@@ -249,37 +255,37 @@ class Chain:
 
             # Extract COM pose
             if offset_transform is None:
-                R = torch.eye(3, dtype=self.dtype, device=self.device)
-                com_pos = torch.zeros(3, dtype=self.dtype, device=self.device)
+                R = torch.eye(3, dtype=compute_dtype, device=self.device)
+                com_pos = torch.zeros(3, dtype=compute_dtype, device=self.device)
             else:
                 T = offset_transform.get_matrix()
                 # Ensure T is 2D (4x4) by squeezing any batch dimensions
                 if T.ndim > 2:
                     T = T.squeeze()
-                T = T.to(dtype=self.dtype, device=self.device)
+                T = T.to(dtype=compute_dtype, device=self.device)
                 R = T[:3, :3].clone()  # Extract rotation, ensure contiguous
                 com_pos = T[:3, 3].clone()  # Extract position
 
             # Convert mass to tensor ONCE
             if torch.is_tensor(mass):
-                m = mass.to(dtype=self.dtype, device=self.device)
+                m = mass.to(dtype=compute_dtype, device=self.device)
             else:
-                m = torch.tensor(mass, dtype=self.dtype, device=self.device)
+                m = torch.tensor(mass, dtype=compute_dtype, device=self.device)
 
             # Rotational inertia
             if inertia_tensor is None:
-                I_rot = torch.zeros((3, 3), dtype=self.dtype, device=self.device)
+                I_rot = torch.zeros((3, 3), dtype=compute_dtype, device=self.device)
             else:
                 I_rot = inertia_tensor.clone()
                 # Ensure I_rot is 2D (3x3)
                 if I_rot.ndim > 2:
                     I_rot = I_rot.squeeze()
-                I_rot = I_rot.to(dtype=self.dtype, device=self.device)
+                I_rot = I_rot.to(dtype=compute_dtype, device=self.device)
                 # Rotate to link frame
                 I_rot = R @ I_rot @ R.transpose(-2, -1)
 
             # Build spatial inertia
-            I3 = torch.eye(3, dtype=self.dtype, device=self.device)
+            I3 = torch.eye(3, dtype=compute_dtype, device=self.device)
             com_skew = skew_symmetric(com_pos.unsqueeze(0)).squeeze(0)
 
             I_spatial[node_idx, :3, :3] = m * I3
@@ -287,7 +293,7 @@ class Chain:
             I_spatial[node_idx, 3:, :3] = m * com_skew
             I_spatial[node_idx, 3:, 3:] = I_rot - m * (com_skew @ com_skew)
 
-        return I_spatial
+        return I_spatial.to(dtype=self.dtype)
 
     def to(
         self, dtype: Optional[torch.dtype] = None, device: Optional[Union[str, torch.device]] = None

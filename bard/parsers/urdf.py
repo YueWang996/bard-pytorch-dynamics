@@ -28,9 +28,9 @@ JOINT_TYPE_MAP = {
 def _convert_transform(origin):
     """Converts a URDF <origin> tag into a bard Transform3d object."""
     if origin is None:
-        return tf.Transform3d()
-    rpy = torch.tensor(origin.rpy, dtype=torch.float32, device="cpu")
-    return tf.Transform3d(rot=tf.quaternion_from_euler(rpy, "sxyz"), pos=origin.xyz)
+        return tf.Transform3d(dtype=torch.float64)
+    rpy = torch.tensor(origin.rpy, dtype=torch.float64, device="cpu")
+    return tf.Transform3d(dtype=torch.float64, rot=tf.quaternion_from_euler(rpy, "sxyz"), pos=origin.xyz)
 
 
 def _convert_inertial(inertial):
@@ -39,7 +39,7 @@ def _convert_inertial(inertial):
         return None
     origin = _convert_transform(inertial.origin)
     mass = inertial.mass
-    inertia = torch.tensor(inertial.inertia.to_matrix(), dtype=torch.float32, device="cpu")
+    inertia = torch.tensor(inertial.inertia.to_matrix(), dtype=torch.float64, device="cpu")
     return (origin, mass, inertia)
 
 
@@ -128,7 +128,7 @@ def build_chain_from_urdf(
     *,
     floating_base: bool = False,
     base_frame_name: str = "floating_base",
-    dtype=torch.float32,
+    dtype=torch.float64,
     device="cpu",
 ):
     """Builds a `bard` Chain object from a URDF file.
@@ -140,7 +140,7 @@ def build_chain_from_urdf(
         base_frame_name (str, optional): The name assigned to the synthetic base
             frame when `floating_base` is True. Defaults to "floating_base".
         dtype (torch.dtype, optional): PyTorch dtype for the chain's tensors.
-            Defaults to torch.float32.
+            Defaults to torch.float64.
         device (str | torch.device, optional): PyTorch device for the chain's tensors.
             Defaults to "cpu".
 
@@ -208,7 +208,7 @@ def build_model_from_urdf(
     *,
     floating_base: bool = False,
     base_frame_name: str = "floating_base",
-    dtype=torch.float32,
+    dtype=torch.float64,
     device="cpu",
     compile_enabled: bool = False,
     compile_kwargs=None,

@@ -1,0 +1,376 @@
+<?xml version="1.0"?>
+<robot name="spine">
+
+  <!-- <link name="world"/>
+
+  <joint name="base_fixed" type="fixed">
+    <parent link="world"/>
+    <child link="hind_spine"/>
+    <origin xyz="0 0 0.5" rpy="0 0 0"/>
+  </joint> -->
+  
+  
+  <link name="hind_body">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="2.044"/>
+      <inertia ixx="0.01614" ixy="0" ixz="0" 
+               iyy="0.007591" iyz="0" 
+               izz="0.02169"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/simplify_hind_body.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/simplify_hind_body.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_hind_left_leg_upper" type="revolute">
+    <parent link="hind_body"/>
+    <child link="hind_left_leg_upper"/>
+    <origin xyz="-0.032496964 0.137389577 -0.00028757" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-10" upper="10" effort="12" velocity="100"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+
+  <link name="hind_left_leg_upper">
+    <inertial>
+      <origin xyz="0.000884 0.011774 -0.058206" rpy="0 0 0"/>
+      <mass value="0.252259"/>
+      <inertia ixx="0.000873" ixy="0" ixz="0" 
+               iyy="0.000942" iyz="0" 
+               izz="0.000192"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/hind_left_leg_upper.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/hind_left_leg_upper.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_hind_left_leg_lower" type="revolute">
+    <parent link="hind_left_leg_upper"/>
+    <child link="hind_left_leg_lower"/>
+    <origin xyz="0 0.012 -0.151" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-10" upper="10" effort="12" velocity="100"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+
+  <link name="hind_left_leg_lower">
+    <inertial>
+      <origin xyz="0.000327 0 -0.061393" rpy="0 0 0"/>
+      <mass value="0.051"/>
+      <inertia ixx="0.000223" ixy="0" ixz="0" 
+               iyy="0.000225" iyz="0" 
+               izz="0.000005078"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/hind_leg_lower.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/hind_leg_lower.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_hind_right_leg_upper" type="revolute">
+    <parent link="hind_body"/>
+    <child link="hind_right_leg_upper"/>
+    <origin xyz="-0.032496964 -0.136610423 -0.00028757" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-10" upper="10" effort="12" velocity="100"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+
+  <link name="hind_right_leg_upper">
+    <inertial>
+      <origin xyz="0.000883 -0.011774 -0.058205" rpy="0 0 0"/>
+      <mass value="0.252259"/>
+      <inertia ixx="0.000873" ixy="0" ixz="0" 
+               iyy="0.000942" iyz="0" 
+               izz="0.000192"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/hind_right_leg_upper.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/hind_right_leg_upper.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_hind_right_leg_lower" type="revolute">
+    <parent link="hind_right_leg_upper"/>
+    <child link="hind_right_leg_lower"/>
+    <origin xyz="0 -0.012 -0.151" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-10" upper="10" effort="12" velocity="100"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+
+  <link name="hind_right_leg_lower">
+    <inertial>
+      <origin xyz="0.000327 0 -0.061393" rpy="0 0 0"/>
+      <mass value="0.051"/>
+      <inertia ixx="0.000223" ixy="0" ixz="0" 
+               iyy="0.000225" iyz="0" 
+               izz="0.000005078"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/hind_leg_lower.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/hind_leg_lower.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_hind_spine" type="revolute">
+    <parent link="hind_body"/>
+    <child link="hind_spine"/>
+    <origin xyz="0.106797362 -0.019360423 0.000984733" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-10" upper="10" effort="12" velocity="100"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+
+  <link name="hind_spine">
+    <inertial>
+      <origin xyz="0.109455866 0.014797864 0" rpy="0 0 0"/>
+      <mass value="0.399"/>
+      <inertia ixx="0.0001953" ixy="0" ixz="0" 
+               iyy="0.0005357" iyz="0" 
+               izz="0.0004759"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/hind_mid_spine.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/hind_mid_spine.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_front_spine" type="revolute">
+    <parent link="hind_spine"/>
+    <child link="front_spine"/>
+    <origin xyz="0.1175 0.036 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-10" upper="10" effort="12" velocity="100"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+
+  <link name="front_spine">
+    <inertial>
+      <origin xyz="0.05875 0.0073 0" rpy="0 0 0"/>
+      <mass value="0.052"/>
+      <inertia ixx="0.0000036976" ixy="0" ixz="0" 
+               iyy="0.000084358" iyz="0" 
+               izz="0.000082312887603"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/front_mid_spine.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/front_mid_spine.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_front_body" type="revolute">
+    <parent link="front_spine"/>
+    <child link="front_body"/>
+    <origin xyz="0.1175 0 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-10" upper="10" effort="12" velocity="100"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+
+  <link name="front_body">
+    <inertial>
+      <origin xyz="0.107249862 -0.019360422 -0.002160635" rpy="0 0 0"/>
+      <mass value="2.044"/>
+      <inertia ixx="0.01614" ixy="0" ixz="0" 
+               iyy="0.007591" iyz="0" 
+               izz="0.02169"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/front_body.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/front_body.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_front_left_leg_upper" type="revolute">
+    <parent link="front_body"/>
+    <child link="front_left_leg_upper"/>
+    <origin xyz="0.139742934 0.11725 -0.00245609" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-10" upper="10" effort="12" velocity="100"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+
+  <link name="front_left_leg_upper">
+    <inertial>
+      <origin xyz="-0.000883 0.011774 -0.058205" rpy="0 0 0"/>
+      <mass value="0.252259"/>
+      <inertia ixx="0.000873" ixy="0" ixz="0" 
+               iyy="0.000942" iyz="0" 
+               izz="0.000192"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/front_left_leg_upper.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/front_left_leg_upper.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_front_left_leg_lower" type="revolute">
+    <parent link="front_left_leg_upper"/>
+    <child link="front_left_leg_lower"/>
+    <origin xyz="0 0.012 -0.151" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-10" upper="10" effort="12" velocity="100"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+
+  <link name="front_left_leg_lower">
+    <inertial>
+      <origin xyz="-0.000327 0 -0.061393" rpy="0 0 0"/>
+      <mass value="0.051"/>
+      <inertia ixx="0.000223" ixy="0" ixz="0" 
+               iyy="0.000225" iyz="0" 
+               izz="0.000005078"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/front_leg_lower.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/front_leg_lower.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_front_right_leg_upper" type="revolute">
+    <parent link="front_body"/>
+    <child link="front_right_leg_upper"/>
+    <origin xyz="0.139742934 -0.15675 -0.002456609" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-10" upper="10" effort="12" velocity="100"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+
+  <link name="front_right_leg_upper">
+    <inertial>
+      <origin xyz="-0.000884 -0.011774 -0.058206" rpy="0 0 0"/>
+      <mass value="0.252259"/>
+      <inertia ixx="0.000873" ixy="0" ixz="0" 
+               iyy="0.000942" iyz="0" 
+               izz="0.000192"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/front_right_leg_upper.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/front_right_leg_upper.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_front_right_leg_lower" type="revolute">
+    <parent link="front_right_leg_upper"/>
+    <child link="front_right_leg_lower"/>
+    <origin xyz="0 -0.012 -0.151" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-10" upper="10" effort="12" velocity="100"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+
+  <link name="front_right_leg_lower">
+    <inertial>
+      <origin xyz="-0.000327 0 -0.061393" rpy="0 0 0"/>
+      <mass value="0.051"/>
+      <inertia ixx="0.000223" ixy="0" ixz="0" 
+               iyy="0.000225" iyz="0" 
+               izz="0.000005078"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/front_leg_lower.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/front_leg_lower.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+</robot>

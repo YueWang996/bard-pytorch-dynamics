@@ -17,5 +17,5 @@ __pycache__/
 *.egg-info/
 *.egg-info
 
-/benchmarks/bench_logs
+/benchmarks/results/
 /docs/build

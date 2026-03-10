@@ -1,0 +1,12 @@
+# Benchmark outputs
+results/*.npz
+results/*.csv
+results/*.pdf
+results/*.png
+
+# Keep the results directory structure
+!results/.gitkeep
+
+# Python cache
+__pycache__/
+*.pyc
