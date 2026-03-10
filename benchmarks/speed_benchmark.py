@@ -107,7 +107,9 @@ def time_fn(fn, n_repeats, device):
     return np.array(times)
 
 
-def bench_robot(robot_name, robot_info, device, dtype, batch_sizes, n_repeats):
+def bench_robot(
+    robot_name, robot_info, device, dtype, batch_sizes, n_repeats, compile_enabled=False
+):
     """Run speed benchmarks for a single robot, all algorithms, all batch sizes."""
     urdf_path = robot_info["urdf"]
     floating_base = robot_info["floating_base"]
@@ -120,6 +122,9 @@ def bench_robot(robot_name, robot_info, device, dtype, batch_sizes, n_repeats):
     bard_model = bard.build_model_from_urdf(str(urdf_path), floating_base=floating_base).to(
         dtype=dtype, device=device
     )
+    if compile_enabled:
+        bard_model.enable_compilation(True)
+        print(f"  torch.compile enabled")
 
     # Load Pinocchio model
     if floating_base:
@@ -320,7 +325,12 @@ def save_results_npz(all_results, device, output_dir):
                 data[key_bard] = results[algo][B]["bard"]
                 data[key_pin] = results[algo][B]["pinocchio"]
 
-    output_path = output_dir / f"speed_{device}.npz"
+    # Include GPU name in filename for multi-GPU benchmarking
+    if "cuda" in str(device) and torch.cuda.is_available():
+        gpu_name = torch.cuda.get_device_name(0).replace(" ", "_")
+        output_path = output_dir / f"speed_{gpu_name}.npz"
+    else:
+        output_path = output_dir / f"speed_{device}.npz"
     np.savez(output_path, **data)
     print(f"\nRaw timing data saved to: {output_path}")
 
@@ -346,6 +356,7 @@ def main():
     )
     parser.add_argument("--n-repeats", type=int, default=NUM_REPEATS)
     parser.add_argument("--dtype", choices=["float32", "float64"], default="float64")
+    parser.add_argument("--compile", action="store_true", help="Enable torch.compile for bard")
     parser.add_argument("--save", action="store_true", help="Save raw timing data as .npz")
     args = parser.parse_args()
 
@@ -360,7 +371,10 @@ def main():
         gpu_name = torch.cuda.get_device_name(0)
         print(f"GPU: {gpu_name}")
 
-    print(f"Device: {device} | Dtype: {args.dtype} | Repeats: {args.n_repeats}")
+    compile_enabled = args.compile
+    print(
+        f"Device: {device} | Dtype: {args.dtype} | Repeats: {args.n_repeats} | Compile: {compile_enabled}"
+    )
     print(f"Batch sizes: {args.batch_sizes}")
 
     output_dir = Path(__file__).parent / "results"
@@ -374,7 +388,7 @@ def main():
         print(f"{'=' * 60}")
 
         results = bench_robot(
-            robot_name, robot_info, device, dtype, args.batch_sizes, args.n_repeats
+            robot_name, robot_info, device, dtype, args.batch_sizes, args.n_repeats, compile_enabled
         )
         all_results[robot_name] = results
 
