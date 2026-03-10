@@ -59,6 +59,7 @@ dev = [
     "matplotlib>=3.5.0",
     "black>=24.1",
     "tabulate>=0.9",
+    "pre-commit>=3.0",
 ]
 
 docs = [
