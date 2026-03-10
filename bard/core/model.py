@@ -840,9 +840,7 @@ class Model:
             # c_i = v_i x vJ (coriolis acceleration)
             if is_actuated:
                 if p_idx == -1:
-                    v_parent = torch.zeros(
-                        batch_size, 6, 1, dtype=self.dtype, device=self.device
-                    )
+                    v_parent = torch.zeros(batch_size, 6, 1, dtype=self.dtype, device=self.device)
                 else:
                     v_parent = v[:batch_size, p_idx]
                 vJ = v_i - Xup[:batch_size, node_idx] @ v_parent
@@ -867,12 +865,18 @@ class Model:
                 d_i = (S_i.transpose(1, 2) @ U_i).squeeze(-1).squeeze(-1)
                 d[:, node_idx] = d_i
 
-                u_i = tau_joints[:, j_idx] - (S_i.transpose(1, 2) @ pA[:, node_idx]).squeeze(-1).squeeze(-1)
+                u_i = tau_joints[:, j_idx] - (S_i.transpose(1, 2) @ pA[:, node_idx]).squeeze(
+                    -1
+                ).squeeze(-1)
                 u[:, node_idx] = u_i
 
                 d_inv = 1.0 / d_i.clamp(min=1e-12).unsqueeze(-1).unsqueeze(-1)
                 Ia = IA_i - U_i @ U_i.transpose(1, 2) * d_inv
-                pa = pA[:, node_idx] + Ia @ c[:, node_idx] + U_i * (u_i / d_i.clamp(min=1e-12)).unsqueeze(-1).unsqueeze(-1)
+                pa = (
+                    pA[:, node_idx]
+                    + Ia @ c[:, node_idx]
+                    + U_i * (u_i / d_i.clamp(min=1e-12)).unsqueeze(-1).unsqueeze(-1)
+                )
 
                 if p_idx != -1:
                     Xup_i_T = Xup[:batch_size, node_idx].transpose(1, 2)
@@ -882,7 +886,9 @@ class Model:
                 # Fixed joint: propagate IA and pA upward
                 if p_idx != -1:
                     Xup_i_T = Xup[:batch_size, node_idx].transpose(1, 2)
-                    IA[:, p_idx] = IA[:, p_idx] + Xup_i_T @ IA[:, node_idx] @ Xup[:batch_size, node_idx]
+                    IA[:, p_idx] = (
+                        IA[:, p_idx] + Xup_i_T @ IA[:, node_idx] @ Xup[:batch_size, node_idx]
+                    )
                     pA[:, p_idx] = pA[:, p_idx] + Xup_i_T @ pA[:, node_idx]
 
         # ---- Pass 3: Forward — compute accelerations ----
@@ -898,9 +904,7 @@ class Model:
             )
 
             # Extract qdd_base: transform a back to node 0 frame, subtract gravity
-            inv_Xup_root = spatial_adjoint_fast(
-                data.T_pc[:batch_size, root_idx]
-            )
+            inv_Xup_root = spatial_adjoint_fast(data.T_pc[:batch_size, root_idx])
             a_in_node0 = inv_Xup_root @ a[:, root_idx]
             qdd_out[:, :6] = (a_in_node0 - a_gravity_base).squeeze(-1)
 
@@ -926,8 +930,13 @@ class Model:
             a_prime = Xup[:batch_size, node_idx] @ a_parent + c[:, node_idx]
 
             if is_actuated:
-                qdd_i = (u[:, node_idx] - (U[:, node_idx].transpose(1, 2) @ a_prime).squeeze(-1).squeeze(-1)) / d[:, node_idx].clamp(min=1e-12)
-                a[:, node_idx] = a_prime + S[:batch_size, node_idx] * qdd_i.unsqueeze(-1).unsqueeze(-1)
+                qdd_i = (
+                    u[:, node_idx]
+                    - (U[:, node_idx].transpose(1, 2) @ a_prime).squeeze(-1).squeeze(-1)
+                ) / d[:, node_idx].clamp(min=1e-12)
+                a[:, node_idx] = a_prime + S[:batch_size, node_idx] * qdd_i.unsqueeze(-1).unsqueeze(
+                    -1
+                )
 
                 vel_idx = self.vel_indices_list[node_idx]
                 if vel_idx != -1:

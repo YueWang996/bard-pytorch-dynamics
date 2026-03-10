@@ -221,9 +221,9 @@ class TestRobotDynamicsFixedBase:
         M = bard.crba(model, data)
         qdd_crba = torch.linalg.solve(M, (tau - bias).unsqueeze(-1)).squeeze(-1)
 
-        assert torch.allclose(qdd_aba, qdd_crba, atol=1e-6), (
-            f"ABA-CRBA mismatch: max_diff={torch.abs(qdd_aba - qdd_crba).max():.3e}"
-        )
+        assert torch.allclose(
+            qdd_aba, qdd_crba, atol=1e-6
+        ), f"ABA-CRBA mismatch: max_diff={torch.abs(qdd_aba - qdd_crba).max():.3e}"
 
 
 # ============================================================================
@@ -333,9 +333,9 @@ class TestRobotDynamicsFloatingBase:
         M = bard.crba(model, data)
         qdd_crba = torch.linalg.solve(M, (tau - bias).unsqueeze(-1)).squeeze(-1)
 
-        assert torch.allclose(qdd_aba, qdd_crba, atol=1e-6), (
-            f"ABA-CRBA mismatch: max_diff={torch.abs(qdd_aba - qdd_crba).max():.3e}"
-        )
+        assert torch.allclose(
+            qdd_aba, qdd_crba, atol=1e-6
+        ), f"ABA-CRBA mismatch: max_diff={torch.abs(qdd_aba - qdd_crba).max():.3e}"
 
     def test_jacobian_return_pose(self, urdf_path, dtype, device):
         """Jacobian with return_pose should return both J and T."""
