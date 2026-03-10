@@ -183,6 +183,48 @@ class TestRobotDynamicsFixedBase:
             tau_rnea, tau_crba, atol=tol
         ), f"RNEA-CRBA mismatch: max_diff={torch.abs(tau_rnea - tau_crba).max():.3e}"
 
+    def test_aba_cached(self, urdf_path, dtype, device):
+        """ABA should produce correct output shape."""
+        model = bard.build_model_from_urdf(urdf_path).to(dtype=dtype, device=device)
+        data = bard.create_data(model, max_batch_size=10)
+        q, qd, _ = _make_random_state(model, 5, dtype, device)
+        tau = torch.randn(5, model.n_joints, dtype=dtype, device=device)
+
+        bard.update_kinematics(model, data, q, qd)
+        qdd = bard.aba(model, data, tau)
+        assert qdd.shape == (5, model.n_joints)
+
+    def test_aba_requires_velocity(self, urdf_path, dtype, device):
+        """ABA should raise error if state lacks velocity data."""
+        model = bard.build_model_from_urdf(urdf_path).to(dtype=dtype, device=device)
+        data = bard.create_data(model, max_batch_size=10)
+        q, _, _ = _make_random_state(model, 5, dtype, device)
+        tau = torch.randn(5, model.n_joints, dtype=dtype, device=device)
+
+        bard.update_kinematics(model, data, q)  # No qd!
+        with pytest.raises(ValueError, match="velocity"):
+            bard.aba(model, data, tau)
+
+    def test_aba_rnea_crba_consistency(self, urdf_path, dtype, device):
+        """ABA(tau) should match solve(M, tau - C(q,qd) - g(q))."""
+        model = bard.build_model_from_urdf(urdf_path).to(dtype=dtype, device=device)
+        data = bard.create_data(model, max_batch_size=10)
+        q, qd, _ = _make_random_state(model, 5, dtype, device)
+        tau = torch.randn(5, model.n_joints, dtype=dtype, device=device)
+
+        bard.update_kinematics(model, data, q, qd)
+        qdd_aba = bard.aba(model, data, tau)
+
+        # Compute qdd via CRBA: qdd = M^{-1} (tau - bias)
+        zero_qdd = torch.zeros_like(qd)
+        bias = bard.rnea(model, data, zero_qdd)  # C(q,qd) + g(q)
+        M = bard.crba(model, data)
+        qdd_crba = torch.linalg.solve(M, (tau - bias).unsqueeze(-1)).squeeze(-1)
+
+        assert torch.allclose(qdd_aba, qdd_crba, atol=1e-6), (
+            f"ABA-CRBA mismatch: max_diff={torch.abs(qdd_aba - qdd_crba).max():.3e}"
+        )
+
 
 # ============================================================================
 # Floating-base tests
@@ -257,6 +299,43 @@ class TestRobotDynamicsFloatingBase:
         assert torch.allclose(
             tau_rnea, tau_crba, atol=tol
         ), f"RNEA-CRBA mismatch: max_diff={torch.abs(tau_rnea - tau_crba).max():.3e}"
+
+    def test_aba_cached(self, urdf_path, dtype, device):
+        """ABA for floating base should produce correct output shape."""
+        model = bard.build_model_from_urdf(urdf_path, floating_base=True).to(
+            dtype=dtype, device=device
+        )
+        data = bard.create_data(model, max_batch_size=10)
+        q, qd, _ = _make_random_state(model, 5, dtype, device)
+        nv = 6 + model.n_joints
+        tau = torch.randn(5, nv, dtype=dtype, device=device)
+
+        bard.update_kinematics(model, data, q, qd)
+        qdd = bard.aba(model, data, tau)
+        assert qdd.shape == (5, nv)
+
+    def test_aba_rnea_crba_consistency(self, urdf_path, dtype, device):
+        """ABA(tau) should match solve(M, tau - bias) for floating base."""
+        model = bard.build_model_from_urdf(urdf_path, floating_base=True).to(
+            dtype=dtype, device=device
+        )
+        data = bard.create_data(model, max_batch_size=10)
+        q, qd, _ = _make_random_state(model, 5, dtype, device)
+        nv = 6 + model.n_joints
+        tau = torch.randn(5, nv, dtype=dtype, device=device)
+
+        bard.update_kinematics(model, data, q, qd)
+        qdd_aba = bard.aba(model, data, tau)
+
+        # Compute qdd via CRBA: qdd = M^{-1} (tau - bias)
+        zero_qdd = torch.zeros_like(qd)
+        bias = bard.rnea(model, data, zero_qdd)
+        M = bard.crba(model, data)
+        qdd_crba = torch.linalg.solve(M, (tau - bias).unsqueeze(-1)).squeeze(-1)
+
+        assert torch.allclose(qdd_aba, qdd_crba, atol=1e-6), (
+            f"ABA-CRBA mismatch: max_diff={torch.abs(qdd_aba - qdd_crba).max():.3e}"
+        )
 
     def test_jacobian_return_pose(self, urdf_path, dtype, device):
         """Jacobian with return_pose should return both J and T."""
@@ -361,3 +440,26 @@ class TestPinocchioValidation:
             max_diff = np.abs(M_bard[i] - M_pin).max()
             tol = 1e-4 if dtype == torch.float32 else 1e-6
             assert max_diff < tol, f"CRBA mismatch at sample {i}: max_diff={max_diff:.3e}"
+
+    def test_aba_vs_pinocchio_fixed(self, urdf_path, pin_model_fixed, dtype, device):
+        """ABA should match Pinocchio for fixed-base robot."""
+        model = bard.build_model_from_urdf(urdf_path).to(dtype=dtype, device=device)
+        data = bard.create_data(model, max_batch_size=10)
+        pin_model, pin_data = pin_model_fixed
+
+        q, qd, _ = _make_random_state(model, 5, dtype, device, seed=400)
+        tau = torch.randn(5, model.n_joints, dtype=dtype, device=device)
+        gravity = torch.tensor([0.0, 0.0, -9.81], dtype=dtype, device=device)
+
+        bard.update_kinematics(model, data, q, qd)
+        qdd_bard = bard.aba(model, data, tau, gravity=gravity).cpu().numpy()
+
+        for i in range(5):
+            q_pin = q[i].cpu().numpy()
+            qd_pin = qd[i].cpu().numpy()
+            tau_pin = tau[i].cpu().numpy()
+            qdd_pin = pin.aba(pin_model, pin_data, q_pin, qd_pin, tau_pin)
+
+            max_diff = np.abs(qdd_bard[i] - qdd_pin).max()
+            tol = 5e-3
+            assert max_diff < tol, f"ABA mismatch at sample {i}: max_diff={max_diff:.3e}"

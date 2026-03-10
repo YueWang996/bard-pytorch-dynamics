@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/YueWang996/bard/actions/workflows/ci.yml/badge.svg)](https://github.com/YueWang996/bard/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-0.3-blue.svg)](https://github.com/YueWang996/bard)
+[![Version](https://img.shields.io/badge/version-0.4.0-blue.svg)](https://github.com/YueWang996/bard)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17291122.svg)](https://doi.org/10.5281/zenodo.17291122)
 
 <p align="center">
@@ -29,7 +29,7 @@ The primary motivation behind `bard` is to provide a dynamics library that integ
 | **Inverse Kinematics** | ❌ | ✅ | ✅ | ✅ |
 | **Jacobian Calculation** | ✅ | ✅ | ✅ | ✅ |
 | **Inverse Dynamics (RNEA)** | ✅ | ✅ | ✅ | ❌ |
-| **Forward Dynamics (ABA)** | ❌ | ✅ | ✅ | ❌ |
+| **Forward Dynamics (ABA)** | ✅ | ✅ | ✅ | ❌ |
 | **Mass Matrix (CRBA)** | ✅ | ✅ | ✅ | ❌ |
 | **URDF Parsing** | ✅ | ✅ | ✅ | ✅ |
 
@@ -66,6 +66,7 @@ T_eef = bard.forward_kinematics(model, data, eef_id)          # O(1) lookup
 J     = bard.jacobian(model, data, eef_id, reference_frame="world")
 tau   = bard.rnea(model, data, qdd, gravity=gravity)
 M     = bard.crba(model, data)
+qdd   = bard.aba(model, data, tau, gravity=gravity)            # Forward dynamics
 ```
 
 ### Standalone FK (No Cache Needed)

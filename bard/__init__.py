@@ -38,6 +38,7 @@ from .api import (
     rnea,
     crba,
     spatial_acceleration,
+    aba,
 )
 
 __all__ = [
@@ -51,4 +52,5 @@ __all__ = [
     "rnea",
     "crba",
     "spatial_acceleration",
+    "aba",
 ]

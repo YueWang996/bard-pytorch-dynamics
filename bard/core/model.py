@@ -225,6 +225,7 @@ class Model:
         self._crba_fn = self._crba_impl
         self._jacobian_fn = self._jacobian_impl
         self._spatial_acceleration_fn = self._spatial_acceleration_impl
+        self._aba_fn = self._aba_impl
         if self._compile_enabled:
             kwargs = self._compile_kwargs.copy()
             self._update_kinematics_fn = torch.compile(self._update_kinematics_impl, **kwargs)
@@ -233,6 +234,7 @@ class Model:
             self._crba_fn = torch.compile(self._crba_impl, **kwargs)
             self._jacobian_fn = torch.compile(self._jacobian_impl, **kwargs)
             self._spatial_acceleration_fn = torch.compile(self._spatial_acceleration_impl, **kwargs)
+            self._aba_fn = torch.compile(self._aba_impl, **kwargs)
 
     # ========================================================================
     # Core: update_kinematics
@@ -770,6 +772,170 @@ class Model:
             return a_world.squeeze(-1)
         else:
             return a_local.squeeze(-1)
+
+    # ========================================================================
+    # ABA (Forward Dynamics)
+    # ========================================================================
+
+    def _aba_impl(
+        self,
+        data: Data,
+        tau: torch.Tensor,
+        gravity: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        """Articulated Body Algorithm (Featherstone RBDA Table 9.5)."""
+        batch_size = data.batch_size
+        Xup = data.Xup
+        S = data.S
+        v = data.v
+
+        IA = data.IA[:batch_size]
+        pA = data.pA[:batch_size]
+        U = data.U[:batch_size]
+        d = data.d[:batch_size]
+        u = data.u[:batch_size]
+        a = data.a[:batch_size]
+        c = data.f[:batch_size]  # Reuse RNEA force buffer for coriolis term
+
+        a.zero_()
+        c.zero_()
+
+        if self.has_floating_base:
+            tau_base = tau[:, :6]
+            tau_joints = tau[:, 6:]
+        else:
+            tau_base = None
+            tau_joints = tau
+
+        g = self.gravity if gravity is None else gravity
+
+        # Gravity pseudo-acceleration: a_0 = -g (Featherstone convention)
+        a_gravity_world = torch.zeros(batch_size, 6, 1, dtype=self.dtype, device=self.device)
+        a_gravity_world[:, :3, 0] = -g.expand(batch_size, -1)
+
+        if self.has_floating_base:
+            T_world_base = data.T_world[:batch_size, self._chain.topo_order[0]]
+            Ad_base_world = spatial_adjoint_fast(inv_homogeneous_fast(T_world_base))
+            a_gravity_base = Ad_base_world @ a_gravity_world
+        else:
+            a_gravity_base = a_gravity_world
+
+        I_spatial_batched = self.I_spatial.unsqueeze(0).expand(batch_size, -1, -1, -1)
+
+        # ---- Pass 1: Initialize IA=I, compute pA (bias force), c (coriolis) ----
+        IA.copy_(I_spatial_batched)
+
+        for node_idx in self._chain.topo_order:
+            j_type = self._chain.joint_type_indices_list[node_idx]
+            p_idx = self._chain.parent_list[node_idx]
+
+            is_revolute = j_type == Joint.TYPES.index("revolute")
+            is_prismatic = j_type == Joint.TYPES.index("prismatic")
+            is_actuated = is_revolute or is_prismatic
+
+            v_i = v[:batch_size, node_idx]
+            Iv = I_spatial_batched[:, node_idx] @ v_i
+            pA[:, node_idx] = force_cross_product_fast(v_i) @ Iv
+
+            # c_i = v_i x vJ (coriolis acceleration)
+            if is_actuated:
+                if p_idx == -1:
+                    v_parent = torch.zeros(
+                        batch_size, 6, 1, dtype=self.dtype, device=self.device
+                    )
+                else:
+                    v_parent = v[:batch_size, p_idx]
+                vJ = v_i - Xup[:batch_size, node_idx] @ v_parent
+                c[:, node_idx] = motion_cross_product_fast(v_i) @ vJ
+
+        # ---- Pass 2: Backward — accumulate articulated body inertia ----
+        for node_idx in reversed(self._chain.topo_order):
+            j_idx = self._chain.joint_indices_list[node_idx]
+            j_type = self._chain.joint_type_indices_list[node_idx]
+            p_idx = self._chain.parent_list[node_idx]
+
+            is_revolute = j_type == Joint.TYPES.index("revolute")
+            is_prismatic = j_type == Joint.TYPES.index("prismatic")
+            is_actuated = is_revolute or is_prismatic
+
+            if is_actuated:
+                S_i = S[:batch_size, node_idx]
+                IA_i = IA[:, node_idx]
+
+                U_i = IA_i @ S_i
+                U[:, node_idx] = U_i
+                d_i = (S_i.transpose(1, 2) @ U_i).squeeze(-1).squeeze(-1)
+                d[:, node_idx] = d_i
+
+                u_i = tau_joints[:, j_idx] - (S_i.transpose(1, 2) @ pA[:, node_idx]).squeeze(-1).squeeze(-1)
+                u[:, node_idx] = u_i
+
+                d_inv = 1.0 / d_i.clamp(min=1e-12).unsqueeze(-1).unsqueeze(-1)
+                Ia = IA_i - U_i @ U_i.transpose(1, 2) * d_inv
+                pa = pA[:, node_idx] + Ia @ c[:, node_idx] + U_i * (u_i / d_i.clamp(min=1e-12)).unsqueeze(-1).unsqueeze(-1)
+
+                if p_idx != -1:
+                    Xup_i_T = Xup[:batch_size, node_idx].transpose(1, 2)
+                    IA[:, p_idx] = IA[:, p_idx] + Xup_i_T @ Ia @ Xup[:batch_size, node_idx]
+                    pA[:, p_idx] = pA[:, p_idx] + Xup_i_T @ pa
+            else:
+                # Fixed joint: propagate IA and pA upward
+                if p_idx != -1:
+                    Xup_i_T = Xup[:batch_size, node_idx].transpose(1, 2)
+                    IA[:, p_idx] = IA[:, p_idx] + Xup_i_T @ IA[:, node_idx] @ Xup[:batch_size, node_idx]
+                    pA[:, p_idx] = pA[:, p_idx] + Xup_i_T @ pA[:, node_idx]
+
+        # ---- Pass 3: Forward — compute accelerations ----
+        root_idx = self.urdf_root_idx
+        qdd_out = torch.zeros(batch_size, self.nv, dtype=self.dtype, device=self.device)
+
+        if self.has_floating_base:
+            # Solve for base acceleration: IA * a = tau_base - pA
+            assert tau_base is not None
+            a[:, root_idx] = torch.linalg.solve(
+                IA[:, root_idx],
+                tau_base.unsqueeze(-1) - pA[:, root_idx],
+            )
+
+            # Extract qdd_base: transform a back to node 0 frame, subtract gravity
+            inv_Xup_root = spatial_adjoint_fast(
+                data.T_pc[:batch_size, root_idx]
+            )
+            a_in_node0 = inv_Xup_root @ a[:, root_idx]
+            qdd_out[:, :6] = (a_in_node0 - a_gravity_base).squeeze(-1)
+
+        for node_idx in self._chain.topo_order:
+            j_idx = self._chain.joint_indices_list[node_idx]
+            j_type = self._chain.joint_type_indices_list[node_idx]
+            p_idx = self._chain.parent_list[node_idx]
+
+            is_revolute = j_type == Joint.TYPES.index("revolute")
+            is_prismatic = j_type == Joint.TYPES.index("prismatic")
+            is_actuated = is_revolute or is_prismatic
+
+            # Skip root nodes for floating base (already computed)
+            if self.has_floating_base and (node_idx == 0 or node_idx == root_idx):
+                continue
+
+            if p_idx == -1:
+                a_parent = a_gravity_base
+            else:
+                a_parent = a[:, p_idx]
+
+            # a'_i = Xup_i * a_parent + c_i
+            a_prime = Xup[:batch_size, node_idx] @ a_parent + c[:, node_idx]
+
+            if is_actuated:
+                qdd_i = (u[:, node_idx] - (U[:, node_idx].transpose(1, 2) @ a_prime).squeeze(-1).squeeze(-1)) / d[:, node_idx].clamp(min=1e-12)
+                a[:, node_idx] = a_prime + S[:batch_size, node_idx] * qdd_i.unsqueeze(-1).unsqueeze(-1)
+
+                vel_idx = self.vel_indices_list[node_idx]
+                if vel_idx != -1:
+                    qdd_out[:, vel_idx] = qdd_i
+            else:
+                a[:, node_idx] = a_prime
+
+        return qdd_out
 
     def __str__(self) -> str:
         return str(self._chain)

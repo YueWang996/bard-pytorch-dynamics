@@ -192,3 +192,34 @@ def spatial_acceleration(
     if reference_frame not in ("world", "local"):
         raise ValueError('reference_frame must be "world" or "local"')
     return model._spatial_acceleration_fn(data, qdd, frame_id, reference_frame)
+
+
+def aba(
+    model: Model,
+    data: Data,
+    tau: torch.Tensor,
+    *,
+    gravity: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Forward dynamics (Articulated Body Algorithm) using cached state.
+
+    Computes joint accelerations ``qdd`` from applied forces ``tau`` using
+    the O(n) Articulated Body Algorithm (Featherstone).
+
+    Requires ``update_kinematics`` with ``qd`` provided.
+
+    Args:
+        model: The robot model.
+        data: The computation workspace (must include velocities).
+        tau: Generalized forces ``(B, nv)``.
+        gravity: 3-element gravity vector. Defaults to ``[0, 0, -9.81]``.
+
+    Returns:
+        Generalized accelerations ``(B, nv)``.
+    """
+    if not data.has_velocity:
+        raise ValueError(
+            "ABA requires velocity data. "
+            "Call update_kinematics(model, data, q, qd) with qd provided."
+        )
+    return model._aba_fn(data, tau, gravity)

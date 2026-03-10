@@ -7,7 +7,7 @@ Top-Level Functions
 -------------------
 
 .. automodule:: bard.api
-   :members: create_data, update_kinematics, forward_kinematics, jacobian, rnea, crba, spatial_acceleration
+   :members: create_data, update_kinematics, forward_kinematics, jacobian, rnea, crba, aba, spatial_acceleration
 
 Model
 -----
