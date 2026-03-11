@@ -2,11 +2,17 @@
 #
 # SLURM batch script for bard speed benchmarks across multiple GPUs.
 #
+# Benchmarks five methods:
+#   1. Pinocchio (C++)        — raw C++ calls, numpy I/O
+#   2. Pinocchio (PyTorch)    — C++ calls with PyTorch tensor conversion
+#   3. ADAM                   — adam-robotics PyTorch backend
+#   4. bard                   — no torch.compile
+#   5. bard (compiled)        — with torch.compile
+#
 # Usage:
 #   sbatch benchmarks/slurm_benchmark.sh                  # submit all GPU jobs
 #   sbatch --export=GPU_TYPE=a100 benchmarks/slurm_benchmark.sh  # single GPU type
 #
-# This script submits separate jobs for each GPU type.
 # Run from the project root directory.
 
 set -euo pipefail
@@ -14,7 +20,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-# GPU configurations: partition,gpu_constraint,time_limit,job_suffix
+# GPU configurations: partition,time_limit,job_suffix
 GPU_CONFIGS=(
     "a100,01:00:00,a100"
     "l4,02:00:00,l4"
@@ -59,7 +65,7 @@ for cfg in "${GPU_CONFIGS[@]}"; do
 #SBATCH --partition=${slurm_partitions}
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=6
 #SBATCH --mem=64G
 #SBATCH --time=${time_limit}
 #SBATCH --gres=gpu:1
@@ -74,18 +80,21 @@ echo "=========================================================="
 nvidia-smi
 echo ""
 
+# Pin to 6 CPU cores for reproducibility across GPU types
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+
 # Activate conda environment
 source "\$(conda info --base)/etc/profile.d/conda.sh"
 conda activate bard
 
 cd ${PROJECT_DIR}
 
-# Run speed benchmark with compilation enabled
-python benchmarks/speed_benchmark.py \\
-    --device cuda \\
-    --compile \\
-    --dtype float64 \\
-    --save \\
+# Run speed benchmark (all 5 methods: Pin C++, Pin PyTorch, ADAM, bard, bard compiled)
+python benchmarks/speed_benchmark.py \
+    --device cuda \
+    --dtype float64 \
+    --save \
     --n-repeats 100
 
 echo ""

@@ -87,11 +87,16 @@ class Model:
         self.joint_offset_stack = torch.stack(joint_offsets_list, dim=0)
         self.link_offset_stack = torch.stack(link_offsets_list, dim=0)
 
+        # --- Cached joint type constants (avoid repeated list.index lookups) ---
+        self._FIXED = Joint.TYPES.index("fixed")
+        self._REVOLUTE = Joint.TYPES.index("revolute")
+        self._PRISMATIC = Joint.TYPES.index("prismatic")
+
         # Velocity index mapping (for CRBA mass matrix assembly)
         self.vel_indices_list = []
         for node_idx in range(self.n_frames):
             joint_type_idx = chain.joint_type_indices_list[node_idx]
-            if joint_type_idx != Joint.TYPES.index("fixed"):
+            if joint_type_idx != self._FIXED:
                 joint_col = chain.joint_indices_list[node_idx]
                 vel_idx = (6 + joint_col) if self.has_floating_base else joint_col
                 self.vel_indices_list.append(vel_idx)
@@ -99,6 +104,12 @@ class Model:
                 self.vel_indices_list.append(-1)
 
         self.urdf_root_idx = 1 if (self.has_floating_base and self.n_frames > 1) else 0
+
+        # Pre-computed per-node flags
+        self._is_actuated = [
+            chain.joint_type_indices_list[i] in (self._REVOLUTE, self._PRISMATIC)
+            for i in range(self.n_frames)
+        ]
 
         # --- Compilation ---
         self._compile_enabled = compile_enabled
@@ -256,8 +267,11 @@ class Model:
         T_world = data.T_world[:batch_size]
         v = data.v[:batch_size]
 
+        vJ = data.vJ[:batch_size]
+
         S.zero_()
         v.zero_()
+        vJ.zero_()
 
         # Split configuration
         if self.has_floating_base:
@@ -308,8 +322,8 @@ class Model:
             )
             T_link_offset = self.link_offset_stack[node_idx].unsqueeze(0).expand(batch_size, -1, -1)
 
-            is_revolute = j_type == Joint.TYPES.index("revolute")
-            is_prismatic = j_type == Joint.TYPES.index("prismatic")
+            is_revolute = j_type == self._REVOLUTE
+            is_prismatic = j_type == self._PRISMATIC
 
             if is_revolute:
                 T_motion = T_revolute[:, j_idx]
@@ -342,7 +356,7 @@ class Model:
             else:
                 T_world[:, node_idx] = T_world[:, p_idx] @ T_pc_i
 
-            # 5. Velocity (if requested)
+            # 5. Velocity (if requested) — also cache vJ for RNEA/ABA
             if compute_velocity:
                 if is_actuated and v_joints is not None:
                     v_joint = v_joints[:, j_idx].view(batch_size, 1, 1)
@@ -359,8 +373,9 @@ class Model:
                 else:
                     v_parent = v[:, p_idx]
 
-                vJ = S[:, node_idx] * v_joint
-                v[:, node_idx] = Xup[:, node_idx] @ v_parent + vJ
+                vJ_i = S[:, node_idx] * v_joint
+                vJ[:, node_idx] = vJ_i
+                v[:, node_idx] = Xup[:, node_idx] @ v_parent + vJ_i
 
         data.batch_size = batch_size
         data.has_velocity = compute_velocity
@@ -404,8 +419,8 @@ class Model:
                 self.joint_offset_stack[node_idx].unsqueeze(0).expand(batch_size, -1, -1)
             )
 
-            is_revolute = joint_type_idx == Joint.TYPES.index("revolute")
-            is_prismatic = joint_type_idx == Joint.TYPES.index("prismatic")
+            is_revolute = joint_type_idx == self._REVOLUTE
+            is_prismatic = joint_type_idx == self._PRISMATIC
 
             if is_revolute:
                 T_motion = T_revolute[:, joint_idx]
@@ -453,8 +468,8 @@ class Model:
             joint_idx = self._chain.joint_indices_list[node_idx]
             joint_type_idx = self._chain.joint_type_indices_list[node_idx]
 
-            is_revolute = joint_type_idx == Joint.TYPES.index("revolute")
-            is_prismatic = joint_type_idx == Joint.TYPES.index("prismatic")
+            is_revolute = joint_type_idx == self._REVOLUTE
+            is_prismatic = joint_type_idx == self._PRISMATIC
 
             if not (is_revolute or is_prismatic):
                 continue
@@ -517,6 +532,7 @@ class Model:
         Xup = data.Xup
         S = data.S
         v = data.v
+        vJ = data.vJ
 
         a = data.a[:batch_size]
         f = data.f[:batch_size]
@@ -541,15 +557,11 @@ class Model:
         else:
             a_gravity_base = a_gravity_world
 
-        # Forward pass: compute accelerations
+        # Forward pass: compute accelerations (using cached vJ from update_kinematics)
         for node_idx in self._chain.topo_order:
             j_idx = self._chain.joint_indices_list[node_idx]
-            j_type = self._chain.joint_type_indices_list[node_idx]
             p_idx = self._chain.parent_list[node_idx]
-
-            is_revolute = j_type == Joint.TYPES.index("revolute")
-            is_prismatic = j_type == Joint.TYPES.index("prismatic")
-            is_actuated = is_revolute or is_prismatic
+            is_actuated = self._is_actuated[node_idx]
 
             if is_actuated:
                 a_joint = a_joints[:, j_idx].view(batch_size, 1, 1)
@@ -564,26 +576,14 @@ class Model:
             else:
                 a_parent = a[:, p_idx]
 
-            if is_actuated:
-                if p_idx == -1:
-                    if self.has_floating_base:
-                        v_parent_node = torch.zeros(
-                            batch_size, 6, 1, dtype=self.dtype, device=self.device
-                        )
-                    else:
-                        v_parent_node = torch.zeros(
-                            batch_size, 6, 1, dtype=self.dtype, device=self.device
-                        )
-                else:
-                    v_parent_node = v[:batch_size, p_idx]
-
-                vJ = v[:batch_size, node_idx] - Xup[:batch_size, node_idx] @ v_parent_node
-            else:
-                vJ = torch.zeros(batch_size, 6, 1, dtype=self.dtype, device=self.device)
-
-            coriolis = motion_cross_product_fast(v[:batch_size, node_idx]) @ vJ
-            temp = Xup[:batch_size, node_idx] @ a_parent
-            a[:, node_idx] = temp + S[:batch_size, node_idx] * a_joint + coriolis
+            coriolis = (
+                motion_cross_product_fast(v[:batch_size, node_idx]) @ vJ[:batch_size, node_idx]
+            )
+            a[:, node_idx] = (
+                Xup[:batch_size, node_idx] @ a_parent
+                + S[:batch_size, node_idx] * a_joint
+                + coriolis
+            )
 
         # Backward pass: force propagation
         I_spatial_batched = self.I_spatial.unsqueeze(0).expand(batch_size, -1, -1, -1)
@@ -603,22 +603,20 @@ class Model:
 
             f[:, node_idx] = f_node
 
-        # Extract generalized forces
+        # Extract generalized forces (pre-allocated output)
+        tau = data.tau_out[:batch_size]
+        tau.zero_()
         tau_all_nodes = (S[:batch_size] * f).sum(dim=2).squeeze(-1)
 
         if self.has_floating_base:
-            tau = torch.zeros(batch_size, 6 + self.n_joints, dtype=self.dtype, device=self.device)
             tau[:, :6] = f[:, self.urdf_root_idx, :, 0]
             for node_idx in range(self.n_frames):
-                j_type = self._chain.joint_type_indices_list[node_idx]
-                if j_type in [Joint.TYPES.index("revolute"), Joint.TYPES.index("prismatic")]:
+                if self._is_actuated[node_idx]:
                     j_col = self._chain.joint_indices_list[node_idx]
                     tau[:, 6 + j_col] = tau_all_nodes[:, node_idx]
         else:
-            tau = torch.zeros(batch_size, self.n_joints, dtype=self.dtype, device=self.device)
             for node_idx in range(self.n_frames):
-                j_type = self._chain.joint_type_indices_list[node_idx]
-                if j_type in [Joint.TYPES.index("revolute"), Joint.TYPES.index("prismatic")]:
+                if self._is_actuated[node_idx]:
                     j_col = self._chain.joint_indices_list[node_idx]
                     tau[:, j_col] = tau_all_nodes[:, node_idx]
 
@@ -729,8 +727,8 @@ class Model:
             j_type = self._chain.joint_type_indices_list[node_idx]
             p_idx = self._chain.parent_list[node_idx]
 
-            is_revolute = j_type == Joint.TYPES.index("revolute")
-            is_prismatic = j_type == Joint.TYPES.index("prismatic")
+            is_revolute = j_type == self._REVOLUTE
+            is_prismatic = j_type == self._PRISMATIC
             is_actuated = is_revolute or is_prismatic
 
             if is_actuated:
@@ -788,6 +786,7 @@ class Model:
         Xup = data.Xup
         S = data.S
         v = data.v
+        cached_vJ = data.vJ
 
         IA = data.IA[:batch_size]
         pA = data.pA[:batch_size]
@@ -826,35 +825,21 @@ class Model:
         IA.copy_(I_spatial_batched)
 
         for node_idx in self._chain.topo_order:
-            j_type = self._chain.joint_type_indices_list[node_idx]
-            p_idx = self._chain.parent_list[node_idx]
-
-            is_revolute = j_type == Joint.TYPES.index("revolute")
-            is_prismatic = j_type == Joint.TYPES.index("prismatic")
-            is_actuated = is_revolute or is_prismatic
+            is_actuated = self._is_actuated[node_idx]
 
             v_i = v[:batch_size, node_idx]
             Iv = I_spatial_batched[:, node_idx] @ v_i
             pA[:, node_idx] = force_cross_product_fast(v_i) @ Iv
 
-            # c_i = v_i x vJ (coriolis acceleration)
+            # c_i = v_i x vJ (using cached vJ from update_kinematics)
             if is_actuated:
-                if p_idx == -1:
-                    v_parent = torch.zeros(batch_size, 6, 1, dtype=self.dtype, device=self.device)
-                else:
-                    v_parent = v[:batch_size, p_idx]
-                vJ = v_i - Xup[:batch_size, node_idx] @ v_parent
-                c[:, node_idx] = motion_cross_product_fast(v_i) @ vJ
+                c[:, node_idx] = motion_cross_product_fast(v_i) @ cached_vJ[:batch_size, node_idx]
 
         # ---- Pass 2: Backward — accumulate articulated body inertia ----
         for node_idx in reversed(self._chain.topo_order):
             j_idx = self._chain.joint_indices_list[node_idx]
-            j_type = self._chain.joint_type_indices_list[node_idx]
             p_idx = self._chain.parent_list[node_idx]
-
-            is_revolute = j_type == Joint.TYPES.index("revolute")
-            is_prismatic = j_type == Joint.TYPES.index("prismatic")
-            is_actuated = is_revolute or is_prismatic
+            is_actuated = self._is_actuated[node_idx]
 
             if is_actuated:
                 S_i = S[:batch_size, node_idx]
@@ -870,12 +855,13 @@ class Model:
                 ).squeeze(-1)
                 u[:, node_idx] = u_i
 
-                d_inv = 1.0 / d_i.clamp(min=1e-12).unsqueeze(-1).unsqueeze(-1)
+                d_safe = d_i.clamp(min=1e-12)
+                d_inv = 1.0 / d_safe.unsqueeze(-1).unsqueeze(-1)
                 Ia = IA_i - U_i @ U_i.transpose(1, 2) * d_inv
                 pa = (
                     pA[:, node_idx]
                     + Ia @ c[:, node_idx]
-                    + U_i * (u_i / d_i.clamp(min=1e-12)).unsqueeze(-1).unsqueeze(-1)
+                    + U_i * (u_i / d_safe).unsqueeze(-1).unsqueeze(-1)
                 )
 
                 if p_idx != -1:
@@ -891,9 +877,10 @@ class Model:
                     )
                     pA[:, p_idx] = pA[:, p_idx] + Xup_i_T @ pA[:, node_idx]
 
-        # ---- Pass 3: Forward — compute accelerations ----
+        # ---- Pass 3: Forward — compute accelerations (pre-allocated output) ----
         root_idx = self.urdf_root_idx
-        qdd_out = torch.zeros(batch_size, self.nv, dtype=self.dtype, device=self.device)
+        qdd_out = data.qdd_out[:batch_size]
+        qdd_out.zero_()
 
         if self.has_floating_base:
             # Solve for base acceleration: IA * a = tau_base - pA
@@ -909,13 +896,8 @@ class Model:
             qdd_out[:, :6] = (a_in_node0 - a_gravity_base).squeeze(-1)
 
         for node_idx in self._chain.topo_order:
-            j_idx = self._chain.joint_indices_list[node_idx]
-            j_type = self._chain.joint_type_indices_list[node_idx]
             p_idx = self._chain.parent_list[node_idx]
-
-            is_revolute = j_type == Joint.TYPES.index("revolute")
-            is_prismatic = j_type == Joint.TYPES.index("prismatic")
-            is_actuated = is_revolute or is_prismatic
+            is_actuated = self._is_actuated[node_idx]
 
             # Skip root nodes for floating base (already computed)
             if self.has_floating_base and (node_idx == 0 or node_idx == root_idx):

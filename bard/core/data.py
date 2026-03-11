@@ -54,9 +54,16 @@ class Data:
         self.M = torch.zeros(B, nv, nv, dtype=dtype, device=device)
         self.J_local = torch.zeros(B, 6, nv, dtype=dtype, device=device)
 
+        # Cached joint velocity (filled by update_kinematics, reused by RNEA/ABA)
+        self.vJ = torch.zeros(B, N, 6, 1, dtype=dtype, device=device)
+
         # ABA-specific buffers
         self.IA = torch.zeros(B, N, 6, 6, dtype=dtype, device=device)
         self.pA = torch.zeros(B, N, 6, 1, dtype=dtype, device=device)
         self.U = torch.zeros(B, N, 6, 1, dtype=dtype, device=device)
         self.d = torch.zeros(B, N, dtype=dtype, device=device)
         self.u = torch.zeros(B, N, dtype=dtype, device=device)
+
+        # Pre-allocated output buffers
+        self.qdd_out = torch.zeros(B, nv, dtype=dtype, device=device)
+        self.tau_out = torch.zeros(B, nv, dtype=dtype, device=device)
