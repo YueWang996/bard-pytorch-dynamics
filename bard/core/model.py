@@ -20,8 +20,6 @@ from bard.transforms import (
 from .utils import (
     as_batched_transform,
     inv_homogeneous_fast,
-    motion_cross_product_fast,
-    force_cross_product_fast,
     spatial_adjoint_fast,
     quat_to_rotmat_fast,
     spatial_adjoint,
@@ -368,8 +366,17 @@ class Model:
             T_pc_i = T_joint_offset @ T_motion @ T_link_offset
             T_pc[:, node_idx] = T_pc_i
 
-            # 2. Xup = Ad(inv(T_pc))
-            Xup[:, node_idx] = spatial_adjoint_fast(inv_homogeneous_fast(T_pc_i))
+            # 2. Xup = Ad(inv(T_pc)) — inlined to avoid per-node allocations
+            R_pc = T_pc_i[:, :3, :3]
+            Rt = R_pc.transpose(1, 2)
+            p_inv = -(Rt @ T_pc_i[:, :3, 3].unsqueeze(-1)).squeeze(-1)
+            px, py, pz = p_inv.unbind(-1)
+            xup_i = Xup[:, node_idx]
+            xup_i[:, :3, :3] = Rt
+            xup_i[:, 3:, 3:] = Rt
+            xup_i[:, 0, 3:] = -pz.unsqueeze(-1) * Rt[:, 1] + py.unsqueeze(-1) * Rt[:, 2]
+            xup_i[:, 1, 3:] = pz.unsqueeze(-1) * Rt[:, 0] - px.unsqueeze(-1) * Rt[:, 2]
+            xup_i[:, 2, 3:] = -py.unsqueeze(-1) * Rt[:, 0] + px.unsqueeze(-1) * Rt[:, 1]
 
             # 3. Joint subspace S (pre-computed, batch-independent)
             is_actuated = is_revolute or is_prismatic
@@ -594,22 +601,33 @@ class Model:
             else:
                 a_parent = a[:, p_idx]
 
-            coriolis = (
-                motion_cross_product_fast(v[:batch_size, node_idx]) @ vJ[:batch_size, node_idx]
+            # Inline motion cross product: ad_v @ vJ (avoids (B,6,6) allocation)
+            v_i = v[:batch_size, node_idx]
+            vJ_i = vJ[:batch_size, node_idx]
+            crx = data._cross_scratch[:batch_size]
+            crx[:, :3] = torch.linalg.cross(v_i[:, 3:], vJ_i[:, :3], dim=1) + torch.linalg.cross(
+                v_i[:, :3], vJ_i[:, 3:], dim=1
             )
+            crx[:, 3:] = torch.linalg.cross(v_i[:, 3:], vJ_i[:, 3:], dim=1)
             a[:, node_idx] = (
-                Xup[:batch_size, node_idx] @ a_parent
-                + S[:batch_size, node_idx] * a_joint
-                + coriolis
+                Xup[:batch_size, node_idx] @ a_parent + S[:batch_size, node_idx] * a_joint + crx
             )
 
         # Backward pass: force propagation
         I_spatial_batched = self.I_spatial.unsqueeze(0).expand(batch_size, -1, -1, -1)
 
         for node_idx in reversed(self._chain.topo_order):
-            Iv = I_spatial_batched[:, node_idx] @ v[:batch_size, node_idx]
+            v_i = v[:batch_size, node_idx]
+            Iv = I_spatial_batched[:, node_idx] @ v_i
             f_node = I_spatial_batched[:, node_idx] @ a[:, node_idx]
-            f_node = f_node + force_cross_product_fast(v[:batch_size, node_idx]) @ Iv
+            # Inline force cross product: ad*_v @ Iv (avoids (B,6,6) allocation)
+            # ad*_v = [w×, 0; v×, w×] where w=ang, v=lin
+            fcx = data._cross_scratch[:batch_size]
+            fcx[:, :3] = torch.linalg.cross(v_i[:, 3:], Iv[:, :3], dim=1)
+            fcx[:, 3:] = torch.linalg.cross(v_i[:, :3], Iv[:, :3], dim=1) + torch.linalg.cross(
+                v_i[:, 3:], Iv[:, 3:], dim=1
+            )
+            f_node = f_node + fcx
 
             children = self._chain.children_list[node_idx]
             if len(children) == 1:
@@ -771,11 +789,15 @@ class Model:
             else:
                 vJ = self._zero_6x1.expand(batch_size, -1, -1)
 
-            coriolis = motion_cross_product_fast(v[:batch_size, node_idx]) @ vJ
+            # Inline motion cross product: ad_v @ vJ
+            v_i = v[:batch_size, node_idx]
+            crx = data._cross_scratch[:batch_size]
+            crx[:, :3] = torch.linalg.cross(v_i[:, 3:], vJ[:, :3], dim=1) + torch.linalg.cross(
+                v_i[:, :3], vJ[:, 3:], dim=1
+            )
+            crx[:, 3:] = torch.linalg.cross(v_i[:, 3:], vJ[:, 3:], dim=1)
             a[:, node_idx] = (
-                Xup[:batch_size, node_idx] @ a_parent
-                + S[:batch_size, node_idx] * a_joint
-                + coriolis
+                Xup[:batch_size, node_idx] @ a_parent + S[:batch_size, node_idx] * a_joint + crx
             )
 
         a_local = a[:, frame_id]
@@ -846,11 +868,23 @@ class Model:
 
             v_i = v[:batch_size, node_idx]
             Iv = I_spatial_batched[:, node_idx] @ v_i
-            pA[:, node_idx] = force_cross_product_fast(v_i) @ Iv
+            # Inline force cross product: ad*_v @ Iv
+            fcx = data._cross_scratch[:batch_size]
+            fcx[:, :3] = torch.linalg.cross(v_i[:, 3:], Iv[:, :3], dim=1)
+            fcx[:, 3:] = torch.linalg.cross(v_i[:, :3], Iv[:, :3], dim=1) + torch.linalg.cross(
+                v_i[:, 3:], Iv[:, 3:], dim=1
+            )
+            pA[:, node_idx] = fcx
 
-            # c_i = v_i x vJ (using cached vJ from update_kinematics)
+            # c_i = v_i x vJ — inline motion cross product
             if is_actuated:
-                c[:, node_idx] = motion_cross_product_fast(v_i) @ cached_vJ[:batch_size, node_idx]
+                vJ_i = cached_vJ[:batch_size, node_idx]
+                crx = data._cross_scratch[:batch_size]
+                crx[:, :3] = torch.linalg.cross(
+                    v_i[:, 3:], vJ_i[:, :3], dim=1
+                ) + torch.linalg.cross(v_i[:, :3], vJ_i[:, 3:], dim=1)
+                crx[:, 3:] = torch.linalg.cross(v_i[:, 3:], vJ_i[:, 3:], dim=1)
+                c[:, node_idx] = crx
 
         # ---- Pass 2: Backward — accumulate articulated body inertia ----
         for node_idx in reversed(self._chain.topo_order):

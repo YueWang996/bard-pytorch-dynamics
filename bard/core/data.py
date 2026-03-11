@@ -70,3 +70,4 @@ class Data:
 
         # Scratch buffers (reusable temporaries to avoid in-loop allocations)
         self.a_gravity_scratch = torch.zeros(B, 6, 1, dtype=dtype, device=device)
+        self._cross_scratch = torch.zeros(B, 6, 1, dtype=dtype, device=device)
