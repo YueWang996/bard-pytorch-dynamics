@@ -448,14 +448,19 @@ def axis_and_d_to_pris_matrix(axis, d):
     Returns: [..., 4, 4]
 
     """
-    batch_axes = axis.shape[:-1]
-    mat33 = torch.eye(3).to(axis).expand(*batch_axes, 3, 3)
     pos = axis * d.unsqueeze(-1)
-    mat44 = torch.cat((mat33, pos.unsqueeze(-1)), -1)
-    mat44 = torch.cat(
-        (mat44, torch.tensor([0.0, 0.0, 0.0, 1.0]).expand(*batch_axes, 1, 4).to(axis)), -2
+    px, py, pz = torch.unbind(pos, -1)
+    _0 = torch.zeros_like(px)
+    _1 = torch.ones_like(px)
+    return torch.stack(
+        [
+            torch.stack([_1, _0, _0, px], -1),
+            torch.stack([_0, _1, _0, py], -1),
+            torch.stack([_0, _0, _1, pz], -1),
+            torch.stack([_0, _0, _0, _1], -1),
+        ],
+        -2,
     )
-    return mat44
 
 
 def axis_and_angle_to_matrix_44(axis, theta):
@@ -470,13 +475,30 @@ def axis_and_angle_to_matrix_44(axis, theta):
     Returns: [..., 4, 4]
 
     """
-    rot = axis_and_angle_to_matrix_33(axis, theta)
-    batch_shape = axis.shape[:-1]
-    mat44 = torch.cat((rot, torch.zeros(*batch_shape, 3, 1).to(axis)), -1)
-    mat44 = torch.cat(
-        (mat44, torch.tensor([0.0, 0.0, 0.0, 1.0]).expand(*batch_shape, 1, 4).to(axis)), -2
+    c = torch.cos(theta)
+    one_minus_c = 1 - c
+    s = torch.sin(theta)
+    kx, ky, kz = torch.unbind(axis, -1)
+    _0 = torch.zeros_like(c)
+    _1 = torch.ones_like(c)
+    r00 = c + kx * kx * one_minus_c
+    r01 = kx * ky * one_minus_c - kz * s
+    r02 = kx * kz * one_minus_c + ky * s
+    r10 = ky * kx * one_minus_c + kz * s
+    r11 = c + ky * ky * one_minus_c
+    r12 = ky * kz * one_minus_c - kx * s
+    r20 = kz * kx * one_minus_c - ky * s
+    r21 = kz * ky * one_minus_c + kx * s
+    r22 = c + kz * kz * one_minus_c
+    return torch.stack(
+        [
+            torch.stack([r00, r01, r02, _0], -1),
+            torch.stack([r10, r11, r12, _0], -1),
+            torch.stack([r20, r21, r22, _0], -1),
+            torch.stack([_0, _0, _0, _1], -1),
+        ],
+        -2,
     )
-    return mat44
 
 
 def axis_and_angle_to_matrix_33(axis, theta):

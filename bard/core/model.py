@@ -18,7 +18,6 @@ from bard.transforms import (
     axis_and_d_to_pris_matrix,
 )
 from .utils import (
-    identity_transform,
     as_batched_transform,
     inv_homogeneous_fast,
     motion_cross_product_fast,
@@ -420,10 +419,7 @@ class Model:
             q_base = None
             q_joints = q
 
-        axes_expanded = self.axes_norm.unsqueeze(0).expand(batch_size, -1, -1)
-        T_revolute = axis_and_angle_to_matrix_44(axes_expanded, q_joints)
-        T_prismatic = axis_and_d_to_pris_matrix(axes_expanded, q_joints)
-        I44 = identity_transform(batch_size, self.dtype, self.device)
+        I44 = self._I44.expand(batch_size, -1, -1)
 
         if self.has_floating_base and q_base is not None:
             t = q_base[:, :3]
@@ -435,6 +431,9 @@ class Model:
             T_world_to_current[:, 3, 3] = 1.0
         else:
             T_world_to_current = I44.clone()
+
+        # Only compute motion transforms for joints on the path (not all joints)
+        axes_expanded = self.axes_norm.unsqueeze(0).expand(batch_size, -1, -1)
 
         for node_idx in path_nodes:
             joint_idx = self._chain.joint_indices_list[node_idx]
@@ -448,9 +447,13 @@ class Model:
             is_prismatic = joint_type_idx == self._PRISMATIC
 
             if is_revolute:
-                T_motion = T_revolute[:, joint_idx]
+                axis = axes_expanded[:, joint_idx : joint_idx + 1]
+                angle = q_joints[:, joint_idx : joint_idx + 1]
+                T_motion = axis_and_angle_to_matrix_44(axis, angle)[:, 0]
             elif is_prismatic:
-                T_motion = T_prismatic[:, joint_idx]
+                axis = axes_expanded[:, joint_idx : joint_idx + 1]
+                d_val = q_joints[:, joint_idx : joint_idx + 1]
+                T_motion = axis_and_d_to_pris_matrix(axis, d_val)[:, 0]
             else:
                 T_motion = I44
 
