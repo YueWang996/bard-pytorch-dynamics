@@ -81,11 +81,13 @@ def spatial_adjoint_fast(T: torch.Tensor) -> torch.Tensor:
         dim=1,
     )
 
-    # Build 6×6 via torch.cat — no torch.zeros allocation
-    _0 = torch.zeros_like(R)
-    top = torch.cat([R, pxR], dim=2)  # (B, 3, 6)
-    bot = torch.cat([_0, R], dim=2)  # (B, 3, 6)
-    return torch.cat([top, bot], dim=1)  # (B, 6, 6)
+    # Build 6×6 result
+    batch = T.shape[0]
+    Ad = torch.zeros((batch, 6, 6), dtype=T.dtype, device=T.device)
+    Ad[:, :3, :3] = R
+    Ad[:, :3, 3:] = pxR
+    Ad[:, 3:, 3:] = R
+    return Ad
 
 
 @torch.jit.script
@@ -107,12 +109,13 @@ def inv_homogeneous_fast(T: torch.Tensor) -> torch.Tensor:
     # Compute -R^T @ p efficiently
     p_inv = -(Rt @ p.unsqueeze(-1)).squeeze(-1)
 
-    # Build result via stack — no torch.zeros allocation
-    _0 = torch.zeros_like(p_inv)
-    _1 = torch.ones_like(p_inv[:, :1])
-    row3 = torch.cat([_0, _1], dim=-1)  # (B, 4)
-    top = torch.cat([Rt, p_inv.unsqueeze(-1)], dim=2)  # (B, 3, 4)
-    return torch.cat([top, row3.unsqueeze(1)], dim=1)  # (B, 4, 4)
+    # Build result
+    batch = T.shape[0]
+    T_inv = torch.zeros((batch, 4, 4), dtype=T.dtype, device=T.device)
+    T_inv[:, :3, :3] = Rt
+    T_inv[:, :3, 3] = p_inv
+    T_inv[:, 3, 3] = 1.0
+    return T_inv
 
 
 @torch.jit.script
@@ -154,10 +157,12 @@ def motion_cross_product_fast(twist: torch.Tensor) -> torch.Tensor:
         dim=-2,
     )
 
-    _0 = torch.zeros_like(w_skew)
-    top = torch.cat([w_skew, v_skew], dim=2)  # (B, 3, 6)
-    bot = torch.cat([_0, w_skew], dim=2)  # (B, 3, 6)
-    return torch.cat([top, bot], dim=1)  # (B, 6, 6)
+    batch = twist.shape[0]
+    result = torch.zeros((batch, 6, 6), dtype=twist.dtype, device=twist.device)
+    result[:, :3, :3] = w_skew
+    result[:, :3, 3:] = v_skew
+    result[:, 3:, 3:] = w_skew
+    return result
 
 
 @torch.jit.script
