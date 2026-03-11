@@ -111,6 +111,38 @@ class Model:
             for i in range(self.n_frames)
         ]
 
+        # --- Pre-compute static joint subspace S (batch-independent) ---
+        self.S_static = torch.zeros(self.n_frames, 6, 1, dtype=self.dtype, device=self.device)
+        for node_idx in range(self.n_frames):
+            j_idx = chain.joint_indices_list[node_idx]
+            j_type = chain.joint_type_indices_list[node_idx]
+            if j_type == self._REVOLUTE or j_type == self._PRISMATIC:
+                twist = torch.zeros(6, 1, dtype=self.dtype, device=self.device)
+                axis = self.axes_norm[j_idx]
+                if j_type == self._REVOLUTE:
+                    twist[3:, 0] = axis
+                else:
+                    twist[:3, 0] = axis
+                Ad_link = spatial_adjoint_fast(
+                    self.link_offset_stack[node_idx].unsqueeze(0)
+                ).squeeze(0)
+                self.S_static[node_idx] = Ad_link @ twist
+
+        # --- Pre-compute raw twist axes for Jacobian (batch-independent) ---
+        self._twist_axes = torch.zeros(self.n_frames, 6, dtype=self.dtype, device=self.device)
+        for node_idx in range(self.n_frames):
+            j_idx = chain.joint_indices_list[node_idx]
+            j_type = chain.joint_type_indices_list[node_idx]
+            if j_type == self._REVOLUTE:
+                self._twist_axes[node_idx, 3:] = self.axes_norm[j_idx]
+            elif j_type == self._PRISMATIC:
+                self._twist_axes[node_idx, :3] = self.axes_norm[j_idx]
+
+        # --- Zero constants (expand is free — returns a view, no allocation) ---
+        self._zero_scalar = torch.zeros(1, 1, 1, dtype=self.dtype, device=self.device)
+        self._zero_6x1 = torch.zeros(1, 6, 1, dtype=self.dtype, device=self.device)
+        self._I44 = torch.eye(4, dtype=self.dtype, device=self.device).unsqueeze(0)
+
         # --- Compilation ---
         self._compile_enabled = compile_enabled
         self._compile_kwargs = compile_kwargs if compile_kwargs is not None else {}
@@ -218,6 +250,11 @@ class Model:
         self.gravity = self.gravity.to(dtype=self.dtype, device=self.device)
         self.joint_offset_stack = self.joint_offset_stack.to(dtype=self.dtype, device=self.device)
         self.link_offset_stack = self.link_offset_stack.to(dtype=self.dtype, device=self.device)
+        self.S_static = self.S_static.to(dtype=self.dtype, device=self.device)
+        self._twist_axes = self._twist_axes.to(dtype=self.dtype, device=self.device)
+        self._zero_scalar = self._zero_scalar.to(dtype=self.dtype, device=self.device)
+        self._zero_6x1 = self._zero_6x1.to(dtype=self.dtype, device=self.device)
+        self._I44 = self._I44.to(dtype=self.dtype, device=self.device)
 
         self._setup_callables()
         return self
@@ -293,11 +330,7 @@ class Model:
         T_revolute = axis_and_angle_to_matrix_44(axes_expanded, q_joints)
         T_prismatic = axis_and_d_to_pris_matrix(axes_expanded, q_joints)
 
-        I44 = (
-            torch.eye(4, dtype=self.dtype, device=self.device)
-            .unsqueeze(0)
-            .expand(batch_size, -1, -1)
-        )
+        I44 = self._I44.expand(batch_size, -1, -1)
 
         # Base transform
         if self.has_floating_base and q_base is not None:
@@ -339,16 +372,10 @@ class Model:
             # 2. Xup = Ad(inv(T_pc))
             Xup[:, node_idx] = spatial_adjoint_fast(inv_homogeneous_fast(T_pc_i))
 
-            # 3. Joint subspace S
+            # 3. Joint subspace S (pre-computed, batch-independent)
             is_actuated = is_revolute or is_prismatic
             if is_actuated:
-                axis_local = self.axes_norm[j_idx].expand(batch_size, -1)
-                twist_joint = torch.zeros(batch_size, 6, 1, dtype=self.dtype, device=self.device)
-                if is_revolute:
-                    twist_joint[:, 3:, 0] = axis_local
-                else:
-                    twist_joint[:, :3, 0] = axis_local
-                S[:, node_idx] = spatial_adjoint_fast(T_link_offset) @ twist_joint
+                S[:, node_idx] = self.S_static[node_idx]
 
             # 4. T_world
             if p_idx == -1:
@@ -361,15 +388,13 @@ class Model:
                 if is_actuated and v_joints is not None:
                     v_joint = v_joints[:, j_idx].view(batch_size, 1, 1)
                 else:
-                    v_joint = torch.zeros(batch_size, 1, 1, dtype=self.dtype, device=self.device)
+                    v_joint = self._zero_scalar.expand(batch_size, -1, -1)
 
                 if p_idx == -1:
                     if self.has_floating_base and v_base is not None:
                         v_parent = v_base.unsqueeze(-1)
                     else:
-                        v_parent = torch.zeros(
-                            batch_size, 6, 1, dtype=self.dtype, device=self.device
-                        )
+                        v_parent = self._zero_6x1.expand(batch_size, -1, -1)
                 else:
                     v_parent = v[:, p_idx]
 
@@ -479,11 +504,7 @@ class Model:
                 if self.has_floating_base:
                     T_world_parent = data.T_world[:batch_size, self._chain.topo_order[0]]
                 else:
-                    T_world_parent = (
-                        torch.eye(4, dtype=self.dtype, device=self.device)
-                        .unsqueeze(0)
-                        .expand(batch_size, -1, -1)
-                    )
+                    T_world_parent = self._I44.expand(batch_size, -1, -1)
             else:
                 T_world_parent = data.T_world[:batch_size, p_idx]
 
@@ -495,14 +516,7 @@ class Model:
             T_frame_to_joint_origin = T_frame_to_world @ T_world_to_joint_origin
             Ad_frame_wrt_joint = spatial_adjoint_fast(T_frame_to_joint_origin)
 
-            axis_local = self.axes_norm[joint_idx]
-            axis_local_batch = axis_local.view(1, 3).expand(batch_size, -1)
-
-            twist_joint = torch.zeros(batch_size, 6, dtype=self.dtype, device=self.device)
-            if is_revolute:
-                twist_joint[:, 3:] = axis_local_batch
-            else:
-                twist_joint[:, :3] = axis_local_batch
+            twist_joint = self._twist_axes[node_idx].unsqueeze(0).expand(batch_size, -1)
 
             col_vec = (Ad_frame_wrt_joint @ twist_joint.unsqueeze(-1)).squeeze(-1)
             J_local[:, :, nv_base + joint_idx] = col_vec
@@ -547,7 +561,8 @@ class Model:
             a_joints = qdd
 
         g = self.gravity if gravity is None else gravity
-        a_gravity_world = torch.zeros(batch_size, 6, 1, dtype=self.dtype, device=self.device)
+        a_gravity_world = data.a_gravity_scratch[:batch_size]
+        a_gravity_world.zero_()
         a_gravity_world[:, :3, 0] = -g.expand(batch_size, -1)
 
         if self.has_floating_base:
@@ -566,7 +581,7 @@ class Model:
             if is_actuated:
                 a_joint = a_joints[:, j_idx].view(batch_size, 1, 1)
             else:
-                a_joint = torch.zeros(batch_size, 1, 1, dtype=self.dtype, device=self.device)
+                a_joint = self._zero_scalar.expand(batch_size, -1, -1)
 
             if p_idx == -1:
                 if self.has_floating_base:
@@ -720,7 +735,7 @@ class Model:
             a_base = None
             a_joints = qdd
 
-        a_world0 = torch.zeros(batch_size, 6, 1, dtype=self.dtype, device=self.device)
+        a_world0 = self._zero_6x1.expand(batch_size, -1, -1)
 
         for node_idx in self._chain.topo_order:
             j_idx = self._chain.joint_indices_list[node_idx]
@@ -734,7 +749,7 @@ class Model:
             if is_actuated:
                 a_joint = a_joints[:, j_idx].view(batch_size, 1, 1)
             else:
-                a_joint = torch.zeros(batch_size, 1, 1, dtype=self.dtype, device=self.device)
+                a_joint = self._zero_scalar.expand(batch_size, -1, -1)
 
             if p_idx == -1:
                 if self.has_floating_base:
@@ -746,14 +761,12 @@ class Model:
 
             if is_actuated:
                 if p_idx == -1:
-                    v_parent_node = torch.zeros(
-                        batch_size, 6, 1, dtype=self.dtype, device=self.device
-                    )
+                    v_parent_node = self._zero_6x1.expand(batch_size, -1, -1)
                 else:
                     v_parent_node = v[:batch_size, p_idx]
                 vJ = v[:batch_size, node_idx] - Xup[:batch_size, node_idx] @ v_parent_node
             else:
-                vJ = torch.zeros(batch_size, 6, 1, dtype=self.dtype, device=self.device)
+                vJ = self._zero_6x1.expand(batch_size, -1, -1)
 
             coriolis = motion_cross_product_fast(v[:batch_size, node_idx]) @ vJ
             a[:, node_idx] = (
@@ -809,7 +822,8 @@ class Model:
         g = self.gravity if gravity is None else gravity
 
         # Gravity pseudo-acceleration: a_0 = -g (Featherstone convention)
-        a_gravity_world = torch.zeros(batch_size, 6, 1, dtype=self.dtype, device=self.device)
+        a_gravity_world = data.a_gravity_scratch[:batch_size]
+        a_gravity_world.zero_()
         a_gravity_world[:, :3, 0] = -g.expand(batch_size, -1)
 
         if self.has_floating_base:

@@ -67,3 +67,6 @@ class Data:
         # Pre-allocated output buffers
         self.qdd_out = torch.zeros(B, nv, dtype=dtype, device=device)
         self.tau_out = torch.zeros(B, nv, dtype=dtype, device=device)
+
+        # Scratch buffers (reusable temporaries to avoid in-loop allocations)
+        self.a_gravity_scratch = torch.zeros(B, 6, 1, dtype=dtype, device=device)
