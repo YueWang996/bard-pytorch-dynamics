@@ -5,16 +5,30 @@ Compares five methods across FK, Jacobian, RNEA, CRBA, ABA, and a Combined
 workflow for multiple robot models at various batch sizes.
 
 Methods:
-  1. Pinocchio (C++)       — Raw C++ calls via Python bindings, numpy I/O
-  2. Pinocchio (PyTorch)   — Same C++ calls, but input/output as PyTorch tensors
-  3. ADAM                   — adam-robotics PyTorch backend
-  4. bard                  — No torch.compile
-  5. bard (compiled)       — With torch.compile
+  1. Pinocchio (C++)       - Raw C++ calls via Python bindings (serial, CPU).
+                             Reference only: shows the per-sample C++ baseline
+                             without any PyTorch/batching overhead.
+  2. Pinocchio (PyTorch)   - Same C++ calls with PyTorch tensor I/O conversion.
+                             Shows the true cost of using Pinocchio inside a
+                             PyTorch training loop (tensor->numpy->C++->stack).
+  3. ADAM                   - adam-robotics differentiable PyTorch backend.
+                             Primary PyTorch baseline for batched comparison.
+  4. bard                  - No torch.compile (eager mode).
+  5. bard (compiled)       - With torch.compile for maximum throughput.
+
+Fair comparison notes:
+  - Each bard timing includes update_kinematics + algorithm (end-to-end),
+    matching ADAM's self-contained calls that internally compute kinematics.
+  - FK/Jacobian/CRBA need position-only kinematics: update_kinematics(q)
+  - RNEA/ABA need velocity kinematics: update_kinematics(q, qd)
+  - Combined times a realistic control-loop workflow (FK + Jacobian + RNEA).
+  - Pinocchio methods always run on CPU (serial loop, no batching).
 
 Usage:
-    python benchmarks/speed_benchmark.py --device cpu
-    python benchmarks/speed_benchmark.py --device cuda --robots go2 xarm7
+    python benchmarks/speed_benchmark.py --device cuda
+    python benchmarks/speed_benchmark.py --device cuda --robots go2 h1 xarm7
     python benchmarks/speed_benchmark.py --device cuda --batch-sizes 1 64 256 1024 4096
+    python benchmarks/speed_benchmark.py --device cpu --dtype float32 --n-repeats 50
 """
 
 import argparse
@@ -117,12 +131,18 @@ def generate_random_q(model, B, device, dtype, floating_base):
 
 
 def bard_q_to_pin_list(q_tensor, floating_base):
-    """Convert bard q batch to list of Pinocchio q arrays (numpy)."""
+    """Convert bard q batch to list of Pinocchio q arrays (numpy).
+
+    Pinocchio uses [x,y,z, qx,qy,qz,qw] quaternion convention while bard uses
+    [x,y,z, qw,qx,qy,qz]. This function handles the reordering.
+    """
     q_np = q_tensor.detach().cpu().numpy()
     out = []
     for i in range(q_np.shape[0]):
         if floating_base:
             qi = q_np[i]
+            # bard: [tx,ty,tz, qw,qx,qy,qz, joints...]
+            # pin:  [tx,ty,tz, qx,qy,qz,qw, joints...]
             out.append(np.concatenate([qi[:3], qi[4:7], qi[3:4], qi[7:]]))
         else:
             out.append(q_np[i].copy())
@@ -130,15 +150,17 @@ def bard_q_to_pin_list(q_tensor, floating_base):
 
 
 def bard_q_to_adam_inputs(q_tensor, qd_tensor, floating_base, dtype):
-    """Convert bard (q, qd) to ADAM inputs (w_H_b, s, base_vel, joint_vel)."""
+    """Convert bard (q, qd) to ADAM inputs (w_H_b, s, base_vel, joint_vel).
+
+    ADAM expects a 4x4 base homogeneous transform and separate joint angles,
+    while bard uses a flat [base_pose; joint_angles] vector.
+    """
     B = q_tensor.shape[0]
     if floating_base:
-        # Extract base position and quaternion [qw, qx, qy, qz]
-        pos = q_tensor[:, :3]  # (B, 3)
-        quat = q_tensor[:, 3:7]  # (B, 4) — [qw, qx, qy, qz]
-        s = q_tensor[:, 7:]  # (B, n_joints)
+        pos = q_tensor[:, :3]
+        quat = q_tensor[:, 3:7]  # [qw, qx, qy, qz]
+        s = q_tensor[:, 7:]
 
-        # Build 4x4 homogeneous transform from pos + quat
         qw, qx, qy, qz = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
         w_H_b = torch.zeros(B, 4, 4, dtype=dtype, device=q_tensor.device)
         w_H_b[:, 0, 0] = 1 - 2 * (qy**2 + qz**2)
@@ -155,8 +177,8 @@ def bard_q_to_adam_inputs(q_tensor, qd_tensor, floating_base, dtype):
         w_H_b[:, 2, 3] = pos[:, 2]
         w_H_b[:, 3, 3] = 1.0
 
-        base_vel = qd_tensor[:, :6]  # (B, 6)
-        joint_vel = qd_tensor[:, 6:]  # (B, n_joints)
+        base_vel = qd_tensor[:, :6]
+        joint_vel = qd_tensor[:, 6:]
     else:
         w_H_b = (
             torch.eye(4, dtype=dtype, device=q_tensor.device)
@@ -172,12 +194,13 @@ def bard_q_to_adam_inputs(q_tensor, qd_tensor, floating_base, dtype):
 
 
 def sync_if_cuda(device):
+    """Synchronize CUDA device to get accurate wall-clock timings."""
     if "cuda" in str(device):
         torch.cuda.synchronize()
 
 
 def time_fn(fn, n_repeats, device):
-    """Time a function, returning array of elapsed times."""
+    """Time a function over n_repeats, returning array of per-call durations (seconds)."""
     sync_if_cuda(device)
     times = []
     for _ in range(n_repeats):
@@ -195,7 +218,11 @@ def time_fn(fn, n_repeats, device):
 
 
 def make_pin_cpp_fns(pin_model, pin_data, pin_fid, q_pin_list, qd_np, qdd_np, tau_np, B):
-    """Return benchmark closures for Pinocchio C++ (raw numpy)."""
+    """Return benchmark closures for Pinocchio C++ (raw numpy, serial loop).
+
+    This is a reference-only baseline showing the raw C++ performance without
+    any PyTorch overhead. Not directly comparable to batched methods.
+    """
 
     def fk():
         for i in range(B):
@@ -241,12 +268,13 @@ def make_pin_torch_fns(
 ):
     """Return benchmark closures for Pinocchio with PyTorch tensor I/O.
 
-    Simulates the cost of using Pinocchio inside a PyTorch pipeline:
-    convert tensors -> call C++ in a loop -> stack results back to tensors.
+    Simulates the realistic cost of using Pinocchio inside a PyTorch training
+    pipeline: convert tensors to numpy, call C++ in a serial loop, then stack
+    results back into PyTorch tensors. This overhead is unavoidable when using
+    non-batched C++ libraries from PyTorch.
     """
 
     def _q_to_pin(q_batch):
-        """Convert a PyTorch batch to per-sample Pinocchio numpy arrays."""
         q_np = q_batch.detach().cpu().numpy()
         out = []
         for i in range(q_np.shape[0]):
@@ -331,7 +359,11 @@ def make_pin_torch_fns(
 
 
 def make_adam_fns(adam_model, w_H_b, s, base_vel, joint_vel, tau_joints, test_frame):
-    """Return benchmark closures for ADAM PyTorch backend."""
+    """Return benchmark closures for ADAM PyTorch backend.
+
+    Each ADAM call is self-contained (internally computes kinematics), so these
+    are directly comparable to bard's end-to-end timings.
+    """
 
     def fk():
         adam_model.forward_kinematics(test_frame, w_H_b, s)
@@ -364,21 +396,35 @@ def make_adam_fns(adam_model, w_H_b, s, base_vel, joint_vel, tau_joints, test_fr
 
 
 def make_bard_fns(bard_model, bard_data, bard_fid, q, qd, qdd, tau):
-    """Return benchmark closures for bard (kinematics cached)."""
+    """Return benchmark closures for bard.
+
+    Each individual algorithm includes update_kinematics for fair comparison
+    against ADAM (which internally computes kinematics on every call).
+
+    FK/Jacobian/CRBA: position-only kinematics (no velocity needed).
+    RNEA/ABA: full kinematics (velocity needed).
+    Combined: single update_kinematics + multiple algorithms (the typical
+    real-world usage pattern that avoids redundant kinematics computation).
+    """
 
     def fk():
-        bard.forward_kinematics(bard_model, bard_data, bard_fid, q=q)
+        bard.update_kinematics(bard_model, bard_data, q)
+        bard.forward_kinematics(bard_model, bard_data, bard_fid)
 
     def jacobian():
+        bard.update_kinematics(bard_model, bard_data, q)
         bard.jacobian(bard_model, bard_data, bard_fid)
 
     def rnea():
+        bard.update_kinematics(bard_model, bard_data, q, qd)
         bard.rnea(bard_model, bard_data, qdd)
 
     def crba():
+        bard.update_kinematics(bard_model, bard_data, q)
         bard.crba(bard_model, bard_data)
 
     def aba():
+        bard.update_kinematics(bard_model, bard_data, q, qd)
         bard.aba(bard_model, bard_data, tau)
 
     def combined():
@@ -412,18 +458,15 @@ def bench_robot(robot_name, robot_info, device, dtype, batch_sizes, n_repeats):
         return None
 
     # --- Load models ---
-    # bard (no compile)
     bard_model = bard.build_model_from_urdf(str(urdf_path), floating_base=floating_base).to(
         dtype=dtype, device=device
     )
-    # bard (compiled)
     bard_model_compiled = bard.build_model_from_urdf(
         str(urdf_path), floating_base=floating_base
     ).to(dtype=dtype, device=device)
     bard_model_compiled.enable_compilation(True)
     print(f"  bard models loaded (nq={bard_model.nq}, nv={bard_model.nv})")
 
-    # Pinocchio
     if HAS_PINOCCHIO:
         if floating_base:
             pin_model = pin.buildModelFromUrdf(str(urdf_path), pin.JointModelFreeFlyer())
@@ -435,7 +478,6 @@ def bench_robot(robot_name, robot_info, device, dtype, batch_sizes, n_repeats):
         pin_model = pin_data = None
         print(f"  Pinocchio not available, skipping")
 
-    # ADAM
     adam_model = None
     if HAS_ADAM:
         try:
@@ -452,6 +494,7 @@ def bench_robot(robot_name, robot_info, device, dtype, batch_sizes, n_repeats):
     test_frame = frame_names[-1] if frame_names else bard_model.get_frame_names()[0]
     bard_fid = bard_model.get_frame_id(test_frame)
     pin_fid = pin_model.getFrameId(test_frame) if pin_model else None
+    print(f"  Test frame: {test_frame}")
 
     max_batch = max(batch_sizes)
     bard_data = bard.create_data(bard_model, max_batch_size=max_batch)
@@ -469,24 +512,16 @@ def bench_robot(robot_name, robot_info, device, dtype, batch_sizes, n_repeats):
         qdd = torch.randn(B, nv, device=device, dtype=dtype)
         tau = torch.randn(B, nv, device=device, dtype=dtype)
 
-        # Pre-compute kinematics for cached bard algorithms
-        bard.update_kinematics(bard_model, bard_data, q, qd)
-        bard.update_kinematics(bard_model_compiled, bard_data_compiled, q, qd)
-
-        # Prepare per-method inputs
+        # Prepare Pinocchio inputs (always CPU numpy)
         q_pin_list = bard_q_to_pin_list(q, floating_base) if pin_model else None
         qd_np = qd.detach().cpu().numpy()
         qdd_np = qdd.detach().cpu().numpy()
         tau_np = tau.detach().cpu().numpy()
 
-        # ADAM inputs
+        # Prepare ADAM inputs
         if adam_model is not None:
             w_H_b, s_adam, base_vel, joint_vel = bard_q_to_adam_inputs(q, qd, floating_base, dtype)
-            n_joints = s_adam.shape[1]
-            if floating_base:
-                tau_joints = tau[:, 6:]  # ADAM ABA takes joint torques only
-            else:
-                tau_joints = tau
+            tau_joints = tau[:, 6:] if floating_base else tau
         else:
             w_H_b = s_adam = base_vel = joint_vel = tau_joints = None
 
@@ -520,7 +555,7 @@ def bench_robot(robot_name, robot_info, device, dtype, batch_sizes, n_repeats):
                 # Warmup
                 for _ in range(WARMUP_ITERS):
                     fn()
-                # Time
+                # Pinocchio always runs on CPU; ADAM/bard use the target device
                 method_device = (
                     "cpu" if method_name in (METHOD_PIN_CPP, METHOD_PIN_TORCH) else device
                 )
@@ -533,21 +568,35 @@ def bench_robot(robot_name, robot_info, device, dtype, batch_sizes, n_repeats):
 
 
 def print_summary_table(robot_name, robot_info, results, batch_sizes, device):
-    """Print throughput and speedup table."""
-    from tabulate import tabulate
+    """Print timing and speedup tables.
+
+    Primary comparison: bard vs ADAM (both are batched PyTorch backends).
+    Secondary reference: Pinocchio C++ (serial CPU) and Pinocchio PyTorch
+    (serial CPU with tensor conversion overhead).
+    """
+    try:
+        from tabulate import tabulate
+    except ImportError:
+        print("  [WARNING] 'tabulate' not installed. Install with: pip install tabulate")
+        print("  Falling back to basic output.\n")
+        _print_basic_table(robot_info, results, batch_sizes, device)
+        return
 
     print(f"\n{'=' * 120}")
     print(f"Speed Benchmark: {robot_info['label']} | device={device}")
+    if "cuda" in str(device) and torch.cuda.is_available():
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
     print(f"{'=' * 120}")
+    print(f"  Note: bard timings include update_kinematics + algorithm (end-to-end)")
 
     for algo in ALGORITHMS:
         print(f"\n  {algo}:")
-        # Determine which methods are present
         sample_B = batch_sizes[0]
         if sample_B not in results[algo]:
             continue
         methods = [m for m in ALL_METHODS if m in results[algo][sample_B]]
 
+        # --- Timing table ---
         headers = ["batch"] + [f"{m} (ms)" for m in methods]
         rows = []
         for B in batch_sizes:
@@ -563,21 +612,21 @@ def print_summary_table(robot_name, robot_info, results, batch_sizes, device):
             rows.append(row)
         print(tabulate(rows, headers=headers, tablefmt="grid"))
 
-        # Print speedup relative to Pinocchio (C++)
-        if METHOD_PIN_CPP in methods:
-            print(f"\n  {algo} — Speedup vs {METHOD_PIN_CPP}:")
-            speedup_methods = [m for m in methods if m != METHOD_PIN_CPP]
+        # --- Speedup vs ADAM (primary comparison) ---
+        if METHOD_ADAM in methods:
+            print(f"\n  {algo} -- Speedup vs {METHOD_ADAM}:")
+            speedup_methods = [m for m in methods if m != METHOD_ADAM]
             headers = ["batch"] + speedup_methods
             rows = []
             for B in batch_sizes:
                 if B not in results[algo]:
                     continue
-                t_pin = float(np.median(results[algo][B][METHOD_PIN_CPP]))
+                t_adam = float(np.median(results[algo][B][METHOD_ADAM]))
                 row = [B]
                 for m in speedup_methods:
                     if m in results[algo][B]:
                         t_m = float(np.median(results[algo][B][m]))
-                        speedup = t_pin / t_m if t_m > 0 else float("inf")
+                        speedup = t_adam / t_m if t_m > 0 else float("inf")
                         row.append(f"{speedup:.2f}x")
                     else:
                         row.append("N/A")
@@ -585,8 +634,41 @@ def print_summary_table(robot_name, robot_info, results, batch_sizes, device):
             print(tabulate(rows, headers=headers, tablefmt="grid"))
 
 
+def _print_basic_table(robot_info, results, batch_sizes, device):
+    """Fallback table printer when tabulate is not available."""
+    print(f"\n{'=' * 100}")
+    print(f"Speed Benchmark: {robot_info['label']} | device={device}")
+    print(f"{'=' * 100}")
+    print(f"  Note: bard timings include update_kinematics + algorithm (end-to-end)")
+
+    for algo in ALGORITHMS:
+        print(f"\n  {algo}:")
+        sample_B = batch_sizes[0]
+        if sample_B not in results[algo]:
+            continue
+        methods = [m for m in ALL_METHODS if m in results[algo][sample_B]]
+
+        header = f"    {'B':>6s}"
+        for m in methods:
+            header += f" | {m + ' (ms)':>20s}"
+        print(header)
+        print(f"    {'-' * (len(header) - 4)}")
+
+        for B in batch_sizes:
+            if B not in results[algo]:
+                continue
+            row = f"    {B:6d}"
+            for m in methods:
+                if m in results[algo][B]:
+                    t_ms = float(np.median(results[algo][B][m])) * 1000
+                    row += f" | {t_ms:20.3f}"
+                else:
+                    row += f" | {'N/A':>20s}"
+            print(row)
+
+
 def save_results_npz(all_results, device, output_dir):
-    """Save raw timing data as .npz for reproducibility."""
+    """Save raw timing data as .npz for reproducibility and post-processing."""
     data = {}
     for robot_name, results in all_results.items():
         if results is None:
@@ -594,7 +676,6 @@ def save_results_npz(all_results, device, output_dir):
         for algo in results:
             for B in results[algo]:
                 for method_name, timing in results[algo][B].items():
-                    # Sanitize method name for npz key
                     safe_name = method_name.replace(" ", "_").replace("(", "").replace(")", "")
                     key = f"{robot_name}_{algo}_B{B}_{safe_name}"
                     data[key] = timing
@@ -609,22 +690,47 @@ def save_results_npz(all_results, device, output_dir):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Speed benchmark: bard vs Pinocchio vs ADAM")
-    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser = argparse.ArgumentParser(
+        description="Speed benchmark: bard vs Pinocchio vs ADAM",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""\
+examples:
+  python benchmarks/speed_benchmark.py --device cuda
+  python benchmarks/speed_benchmark.py --device cuda --robots h1 go2 --save
+  python benchmarks/speed_benchmark.py --device cpu --batch-sizes 1 16 64 256
+""",
+    )
+    parser.add_argument(
+        "--device",
+        default="cuda" if torch.cuda.is_available() else "cpu",
+        help="Compute device (default: cuda if available)",
+    )
     parser.add_argument(
         "--robots",
         nargs="+",
         default=list(ROBOT_REGISTRY.keys()),
         choices=list(ROBOT_REGISTRY.keys()),
+        help="Robot models to benchmark",
     )
     parser.add_argument(
         "--batch-sizes",
         nargs="+",
         type=int,
         default=DEFAULT_BATCH_SIZES,
+        help="Batch sizes to test",
     )
-    parser.add_argument("--n-repeats", type=int, default=NUM_REPEATS)
-    parser.add_argument("--dtype", choices=["float32", "float64"], default="float64")
+    parser.add_argument(
+        "--n-repeats",
+        type=int,
+        default=NUM_REPEATS,
+        help="Number of timing repeats per measurement",
+    )
+    parser.add_argument(
+        "--dtype",
+        choices=["float32", "float64"],
+        default="float64",
+        help="Floating-point precision",
+    )
     parser.add_argument("--save", action="store_true", help="Save raw timing data as .npz")
     args = parser.parse_args()
 
@@ -641,6 +747,7 @@ def main():
         print(f"GPU: {torch.cuda.get_device_name(0)}")
     print(f"Pinocchio: {'available' if HAS_PINOCCHIO else 'NOT available'}")
     print(f"ADAM: {'available' if HAS_ADAM else 'NOT available'}")
+    print(f"Triton: {'available' if bard.core.model.HAS_TRITON else 'NOT available'}")
 
     output_dir = Path(__file__).parent / "results"
     output_dir.mkdir(exist_ok=True)

@@ -1,6 +1,41 @@
 Changelog
 =========
 
+v0.4.3
+------
+
+**Performance: torch.compile for all algorithms + cleanup**
+
+* Enabled ``torch.compile`` for CRBA and ABA on CUDA (previously skipped when
+  Triton kernels were available). Compilation now optimizes surrounding PyTorch
+  operations while Triton handles the bottleneck 6x6 double-matmul. Result:
+  CRBA 2.1x faster, ABA 1.7x faster at B=1 with compile enabled.
+
+* Moved Triton kernel import to module level, eliminating repeated import
+  overhead in hot loops. ``_use_triton_kernels`` now properly gates on
+  ``HAS_TRITON`` instead of being hardcoded to ``True``.
+
+* Rewrote ``benchmarks/speed_benchmark.py`` for fair comparison: each bard
+  algorithm timing now includes ``update_kinematics`` (end-to-end), matching
+  ADAM's self-contained calls. Speedup tables use ADAM as the primary baseline.
+  Pinocchio C++ is included as a serial CPU reference.
+
+* Added autograd documentation to Quick Start guide with examples for
+  ``d(M)/d(q)`` through CRBA, ``d(qdd)/d(tau)`` through ABA.
+
+* Removed obsolete files: ``quick_bench.py``, ``basic_test.py``,
+  ``bard_basic_test.py``, and root-level profiling/debug scripts.
+
+v0.4.2
+------
+
+**Performance: Inline spatial cross products, eliminate per-node allocations**
+
+* Inline spatial cross products to eliminate per-node GPU allocations.
+* Revert JIT functions to ``torch.zeros`` pattern for ``torch.compile``
+  compatibility.
+* Eliminate hidden tensor allocations in core transform functions.
+
 v0.3
 ----
 

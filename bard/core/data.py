@@ -37,12 +37,17 @@ class Data:
         self.max_batch_size = max_batch_size
         self.batch_size: int = 0
         self.has_velocity: bool = False
+        self._t_pc_valid: bool = False  # Lazy T_pc: computed on-demand
+        self._xup_valid: bool = False  # Lazy Xup: computed on-demand by dynamics algos
+        self._t_world_valid: bool = False  # Lazy T_world: computed on-demand
+        self._q: Optional[torch.Tensor] = None  # Stored q for lazy FK
 
         B, N = max_batch_size, n_nodes
 
         # Kinematics cache buffers
         self.T_pc = torch.zeros(B, N, 4, 4, dtype=dtype, device=device)
         self.Xup = torch.zeros(B, N, 6, 6, dtype=dtype, device=device)
+        self.Xup_T = torch.zeros(B, N, 6, 6, dtype=dtype, device=device)  # contiguous transpose
         self.S = torch.zeros(B, N, 6, 1, dtype=dtype, device=device)
         self.T_world = torch.zeros(B, N, 4, 4, dtype=dtype, device=device)
         self.v = torch.zeros(B, N, 6, 1, dtype=dtype, device=device)
@@ -71,3 +76,9 @@ class Data:
         # Scratch buffers (reusable temporaries to avoid in-loop allocations)
         self.a_gravity_scratch = torch.zeros(B, 6, 1, dtype=dtype, device=device)
         self._cross_scratch = torch.zeros(B, 6, 1, dtype=dtype, device=device)
+
+        # Scratch for inline rotation and transform computation
+        self._R33_scratch = torch.zeros(B, 3, 3, dtype=dtype, device=device)
+        self._T_scratch = torch.zeros(B, 4, 4, dtype=dtype, device=device)
+        self._Ad_scratch = torch.zeros(B, 6, 6, dtype=dtype, device=device)
+        self._T_inv_scratch = torch.zeros(B, 4, 4, dtype=dtype, device=device)

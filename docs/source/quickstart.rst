@@ -122,6 +122,51 @@ when building the model. The generalized coordinates include a 7-element base po
    # q: (B, 7 + n_joints) -- base pose + joint angles
    # qd: (B, 6 + n_joints) -- base spatial velocity + joint velocities
 
+Autograd Differentiation
+------------------------
+
+bard supports PyTorch autograd for key gradient computations. Simply pass tensors
+with ``requires_grad=True`` and bard automatically switches to a functional code
+path that is compatible with the gradient tape.
+
+.. code-block:: python
+
+   import torch
+   import bard
+
+   model = bard.build_model_from_urdf("go2.urdf", floating_base=True)
+   model.to(dtype=torch.float64)
+   data = bard.create_data(model, max_batch_size=4)
+
+   # d(M)/d(q): gradient of mass matrix w.r.t. joint configuration
+   q = torch.randn(1, model.nq, dtype=torch.float64, requires_grad=True)
+   bard.update_kinematics(model, data, q)
+   M = bard.crba(model, data)
+   M.sum().backward()
+   print(f"dM/dq shape: {q.grad.shape}")  # (1, nq)
+
+   # d(qdd)/d(tau): gradient of forward dynamics w.r.t. applied torques
+   q2 = torch.randn(1, model.nq, dtype=torch.float64)
+   qd = torch.randn(1, model.nv, dtype=torch.float64)
+   tau = torch.randn(1, model.nv, dtype=torch.float64, requires_grad=True)
+   bard.update_kinematics(model, data, q2, qd)
+   qdd = bard.aba(model, data, tau)
+   qdd.sum().backward()
+   print(f"d(qdd)/d(tau) shape: {tau.grad.shape}")  # (1, nv)
+
+Supported autograd paths:
+
+- **CRBA:** ``d(M)/d(q)`` via ``update_kinematics(q) -> crba()``
+- **ABA:** ``d(qdd)/d(tau)`` via ``aba(tau)``
+- **RNEA:** ``d(tau)/d(qdd)`` via ``rnea(qdd)``
+
+.. note::
+
+   Gradients through ABA/RNEA with respect to ``q`` are not yet supported.
+   When autograd is active, algorithms use fresh tensor allocations instead of
+   pre-allocated buffers, which is slower but necessary for correct gradient
+   computation.
+
 Enabling Compilation for Maximum Performance
 ---------------------------------------------
 

@@ -89,6 +89,9 @@ def forward_kinematics(
                 f"Batch size {batch_size} exceeds max_batch_size {data.max_batch_size}."
             )
         return model._fk_fn(data, q, frame_id)
+    # Use path-only FK if T_world hasn't been computed yet
+    if not data._t_world_valid and data._q is not None:
+        return model._fk_fn(data, data._q, frame_id)
     return data.T_world[: data.batch_size, frame_id]
 
 

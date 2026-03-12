@@ -90,6 +90,49 @@ def spatial_adjoint_fast(T: torch.Tensor) -> torch.Tensor:
     return Ad
 
 
+def spatial_adjoint_into(T: torch.Tensor, out: torch.Tensor) -> torch.Tensor:
+    """Compute spatial adjoint, writing into pre-allocated output buffer.
+
+    Args:
+        T: Homogeneous transformation matrix (B, 4, 4)
+        out: Pre-allocated output buffer (B, 6, 6)
+
+    Returns:
+        The same out tensor.
+    """
+    R = T[:, :3, :3]
+    p = T[:, :3, 3]
+    px, py, pz = p.unbind(-1)
+    out[:, :3, :3] = R
+    out[:, 3:, 3:] = R
+    out[:, 3:, :3] = 0.0
+    out[:, 0, 3:] = -pz.unsqueeze(-1) * R[:, 1] + py.unsqueeze(-1) * R[:, 2]
+    out[:, 1, 3:] = pz.unsqueeze(-1) * R[:, 0] - px.unsqueeze(-1) * R[:, 2]
+    out[:, 2, 3:] = -py.unsqueeze(-1) * R[:, 0] + px.unsqueeze(-1) * R[:, 1]
+    return out
+
+
+def inv_homogeneous_into(T: torch.Tensor, out: torch.Tensor) -> torch.Tensor:
+    """Compute inverse homogeneous transform, writing into pre-allocated buffer.
+
+    Args:
+        T: Homogeneous transformation (B, 4, 4)
+        out: Pre-allocated output buffer (B, 4, 4)
+
+    Returns:
+        The same out tensor.
+    """
+    R = T[:, :3, :3]
+    Rt = R.transpose(1, 2)
+    p = T[:, :3, 3]
+    p_inv = -(Rt @ p.unsqueeze(-1)).squeeze(-1)
+    out[:, :3, :3] = Rt
+    out[:, :3, 3] = p_inv
+    out[:, 3, :3] = 0.0
+    out[:, 3, 3] = 1.0
+    return out
+
+
 @torch.jit.script
 def inv_homogeneous_fast(T: torch.Tensor) -> torch.Tensor:
     """Optimized inverse of homogeneous transformation matrix.
