@@ -404,6 +404,7 @@ class Model:
         self._rnea_fn = self._rnea_impl
         self._crba_fn = self._crba_impl
         self._jacobian_fn = self._jacobian_impl
+        self._jacobian_standalone_fn = self._jacobian_standalone_impl
         self._spatial_acceleration_fn = self._spatial_acceleration_impl
         self._aba_fn = self._aba_impl
         if self._compile_enabled:
@@ -413,6 +414,7 @@ class Model:
             self._rnea_fn = torch.compile(self._rnea_impl, **kwargs)
             self._crba_fn = torch.compile(self._crba_impl, **kwargs)
             self._jacobian_fn = torch.compile(self._jacobian_impl, **kwargs)
+            self._jacobian_standalone_fn = torch.compile(self._jacobian_standalone_impl, **kwargs)
             self._spatial_acceleration_fn = torch.compile(self._spatial_acceleration_impl, **kwargs)
             self._aba_fn = torch.compile(self._aba_impl, **kwargs)
 
@@ -1096,6 +1098,146 @@ class Model:
 
         if return_eef_pose:
             return J, T_world_to_frame
+        return J
+
+    def _jacobian_standalone_impl(
+        self,
+        data: Data,
+        q: torch.Tensor,
+        frame_id: int,
+        reference_frame: str,
+        return_eef_pose: bool,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """Standalone Jacobian: path-only traversal from q, no update_kinematics needed.
+
+        Fuses FK propagation with Jacobian column computation in a single pass
+        along the kinematic chain. Only visits nodes on the path to frame_id,
+        avoiding the O(N) full-tree T_world computation.
+        """
+        batch_size = q.shape[0]
+        nv_base = 6 if self.has_floating_base else 0
+        use_world = reference_frame == "world"
+        collapsed_path = self._fk_collapsed_paths[frame_id]
+
+        if self.has_floating_base:
+            q_base = q[:, :7]
+            q_joints = q[:, 7:]
+        else:
+            q_base = None
+            q_joints = q
+
+        # Initialize root transform
+        if self.has_floating_base and q_base is not None:
+            t_world = q_base[:, :3]
+            R_world = quat_to_rotmat_fast(q_base[:, 3:])
+        else:
+            R_world = self._I44[0, :3, :3].unsqueeze(0).expand(batch_size, 3, 3).contiguous()
+            t_world = q.new_zeros(batch_size, 3)
+
+        # Output Jacobian — use pre-allocated workspace
+        J = data.J_local[:batch_size]
+        J.zero_()
+
+        # Floating base columns
+        if self.has_floating_base:
+            # At root: T_world_to_base is just the base transform
+            T_base = torch.zeros(batch_size, 4, 4, dtype=q.dtype, device=q.device)
+            T_base[:, :3, :3] = R_world
+            T_base[:, :3, 3] = t_world
+            T_base[:, 3, 3] = 1.0
+            if use_world:
+                Ad_base = spatial_adjoint_fast(T_base)
+            else:
+                # Will be updated after we know R_frame, p_frame
+                pass  # deferred below
+            if use_world:
+                J[:, :, :nv_base] = Ad_base
+
+        # Fused FK + Jacobian: propagate along path, compute columns on-the-fly
+        # R_parent/t_parent track the *parent* world transform for each joint
+        R_parent = R_world
+        t_parent = t_world
+
+        for entry in collapsed_path:
+            entry_type = entry[0]
+            if entry_type == 0:  # merged fixed joints
+                R_pc = entry[1]  # (3,3)
+                t_pc = entry[2]  # (3,)
+                t_world = (R_world @ t_pc.unsqueeze(-1)).squeeze(-1) + t_world
+                R_world = R_world @ R_pc
+            elif entry_type == 1:  # revolute
+                node_idx = entry[1]
+                joint_idx = entry[2]
+                col = nv_base + joint_idx
+
+                # Compute Jacobian column using current R_parent, t_parent
+                # (parent transform = R_world, t_world *before* this joint)
+                rotated_axis = self._jac_rotated_axis[node_idx]  # (3,)
+                Ra_world = R_world @ rotated_axis  # (B, 3)
+                p_offset = self._jac_p_offset[node_idx]  # (3,)
+                p_wj = R_world @ p_offset + t_world  # (B, 3)
+
+                if use_world:
+                    J[:, :3, col] = torch.linalg.cross(p_wj, Ra_world, dim=1)
+                    J[:, 3:, col] = Ra_world
+
+                # Propagate FK through this joint
+                angle = q_joints[:, joint_idx]
+                s = torch.sin(angle).unsqueeze(-1).unsqueeze(-1)
+                one_c = (1.0 - torch.cos(angle)).unsqueeze(-1).unsqueeze(-1)
+                R_pc = (
+                    self.R_static_rot[node_idx]
+                    + s * self.A_rot[node_idx]
+                    + one_c * self.B_rot[node_idx]
+                )
+                s3 = s.squeeze(-1)
+                one_c3 = one_c.squeeze(-1)
+                t_pc = (
+                    self.t_static_rot[node_idx]
+                    + s3 * self.a_trans[node_idx]
+                    + one_c3 * self.b_trans[node_idx]
+                )
+                t_world = (R_world @ t_pc.unsqueeze(-1)).squeeze(-1) + t_world
+                R_world = R_world @ R_pc
+            else:  # prismatic
+                node_idx = entry[1]
+                joint_idx = entry[2]
+                col = nv_base + joint_idx
+
+                # Jacobian column for prismatic: [R@a; 0]
+                rotated_axis = self._jac_rotated_axis[node_idx]
+                Ra_world = R_world @ rotated_axis
+
+                if use_world:
+                    J[:, :3, col] = Ra_world
+
+                # Propagate FK
+                d_val = q_joints[:, joint_idx]
+                axis = self.axes_norm[joint_idx]
+                t_motion = axis * d_val.unsqueeze(-1)
+                t_pc = (
+                    self.R_pre[node_idx] @ (t_motion + self.t_post[node_idx]).unsqueeze(-1)
+                ).squeeze(-1) + self.t_pre[node_idx]
+                R_pc = self.T_static_pc[node_idx, :3, :3]
+                t_world = (R_world @ t_pc.unsqueeze(-1)).squeeze(-1) + t_world
+                R_world = R_world @ R_pc
+
+        # Local frame: fall back to cached T_world implementation
+        # (world frame is the common fast path)
+        if not use_world:
+            data.batch_size = batch_size
+            data._q = q
+            data._t_pc_valid = False
+            data._t_world_valid = False
+            self._ensure_t_world(data)
+            return self._jacobian_impl(data, frame_id, reference_frame, return_eef_pose)
+
+        if return_eef_pose:
+            top = torch.cat([R_world, t_world.unsqueeze(-1)], dim=-1)
+            bottom = R_world.new_zeros(batch_size, 1, 4)
+            bottom[:, 0, 3] = 1.0
+            T_frame = torch.cat([top, bottom], dim=-2)
+            return J, T_frame
         return J
 
     # ========================================================================

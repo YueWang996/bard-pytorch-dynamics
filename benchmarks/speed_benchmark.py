@@ -412,8 +412,7 @@ def make_bard_fns(bard_model, bard_data, bard_fid, q, qd, qdd, tau):
         bard.forward_kinematics(bard_model, bard_data, bard_fid)
 
     def jacobian():
-        bard.update_kinematics(bard_model, bard_data, q)
-        bard.jacobian(bard_model, bard_data, bard_fid)
+        bard.jacobian(bard_model, bard_data, bard_fid, q=q)
 
     def rnea():
         bard.update_kinematics(bard_model, bard_data, q, qd)

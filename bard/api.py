@@ -100,17 +100,23 @@ def jacobian(
     data: Data,
     frame_id: int,
     *,
+    q: Optional[torch.Tensor] = None,
     reference_frame: str = "world",
     return_pose: bool = False,
 ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-    """Geometric Jacobian using cached state.
+    """Geometric Jacobian.
 
-    Requires a prior ``update_kinematics`` call.
+    **Cached mode** (default): O(path_length) using prior ``update_kinematics`` state.
+
+    **Standalone mode**: Pass ``q`` to perform a path-only traversal without
+    needing ``update_kinematics``. Fuses FK propagation with Jacobian column
+    computation in a single pass, avoiding the O(N) full-tree T_world computation.
 
     Args:
         model: The robot model.
         data: The computation workspace.
         frame_id: Target frame index.
+        q: If provided, performs standalone Jacobian (path-only traversal).
         reference_frame: ``"world"`` or ``"local"``.
         return_pose: If True, also returns the world-frame pose.
 
@@ -119,6 +125,13 @@ def jacobian(
     """
     if reference_frame not in ("world", "local"):
         raise ValueError('reference_frame must be "world" or "local"')
+    if q is not None:
+        batch_size = q.shape[0]
+        if batch_size > data.max_batch_size:
+            raise ValueError(
+                f"Batch size {batch_size} exceeds max_batch_size {data.max_batch_size}."
+            )
+        return model._jacobian_standalone_fn(data, q, frame_id, reference_frame, return_pose)
     return model._jacobian_fn(data, frame_id, reference_frame, return_pose)
 
 
