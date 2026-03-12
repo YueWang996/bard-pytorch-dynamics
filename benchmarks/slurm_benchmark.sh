@@ -49,6 +49,8 @@ fi
 echo "Submitting bard benchmark jobs from: $PROJECT_DIR"
 echo ""
 
+mkdir -p "${PROJECT_DIR}/benchmarks/results"
+
 for cfg in "${GPU_CONFIGS[@]}"; do
     IFS=',' read -r partitions time_limit suffix <<< "$cfg"
     # Convert partition1:partition2 to partition1,partition2 for SLURM
