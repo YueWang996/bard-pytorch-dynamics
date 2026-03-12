@@ -7,6 +7,7 @@ Usage:
 """
 
 import argparse
+import re
 import sys
 import os
 from pathlib import Path
@@ -31,39 +32,93 @@ ROBOT_LABELS = {
 
 ALGORITHMS = ["FK", "Jacobian", "RNEA", "CRBA", "ABA", "Combined"]
 
-# Color scheme
-COLORS = {
-    "bard": "#2196F3",
-    "pinocchio": "#FF5722",
+# Known backend safe names (as produced by save_results_npz)
+# Order: Pinocchio (PyTorch) is baseline, then reference, then competitors
+BACKEND_SAFE_NAMES = [
+    "Pinocchio_PyTorch",
+    "Pinocchio_C++",
+    "ADAM",
+    "bard",
+    "bard_compiled",
+]
+
+BASELINE_BACKEND = "Pinocchio_PyTorch"
+
+# Display labels
+BACKEND_LABELS = {
+    "Pinocchio_PyTorch": "Pinocchio (PyTorch)",
+    "Pinocchio_C++": "Pinocchio (C++)",
+    "ADAM": "ADAM",
+    "bard": "bard",
+    "bard_compiled": "bard (compiled)",
 }
+
+# Color scheme for 5 methods
+COLORS = {
+    "Pinocchio_PyTorch": "#FF5722",
+    "Pinocchio_C++": "#FF9800",
+    "ADAM": "#9C27B0",
+    "bard": "#2196F3",
+    "bard_compiled": "#4CAF50",
+}
+
 LINESTYLES = {
+    "Pinocchio_PyTorch": "--",
+    "Pinocchio_C++": ":",
+    "ADAM": "-.",
     "bard": "-",
-    "pinocchio": "--",
+    "bard_compiled": "-",
+}
+
+MARKERS = {
+    "Pinocchio_PyTorch": "s",
+    "Pinocchio_C++": "D",
+    "ADAM": "^",
+    "bard": "o",
+    "bard_compiled": "v",
 }
 
 
 def load_data(npz_path):
-    """Load .npz and parse into structured dict."""
+    """Load .npz and parse into structured dict.
+
+    Key format from save_results_npz:
+        {robot}_{algo}_B{batch}_{safe_method_name}
+
+    safe_method_name can be multi-word (e.g. Pinocchio_PyTorch, bard_compiled),
+    so we match known backend suffixes instead of naive splitting.
+    """
     raw = np.load(npz_path)
     data = {}
 
     for key in raw.files:
-        # key format: robotname_algo_B{batchsize}_{backend}
-        parts = key.rsplit("_", 1)
-        backend = parts[1]  # "bard" or "pinocchio"
-        prefix = parts[0]
+        # Try to match each known backend suffix
+        backend = None
+        prefix = None
+        for bname in sorted(BACKEND_SAFE_NAMES, key=len, reverse=True):
+            if key.endswith(f"_{bname}"):
+                backend = bname
+                prefix = key[: -len(bname) - 1]
+                break
+        if backend is None:
+            continue
 
-        # Find batch size
-        b_idx = prefix.rfind("_B")
-        batch_size = int(prefix[b_idx + 2 :])
-        robot_algo = prefix[:b_idx]
+        # Parse batch size: prefix ends with _B{number}
+        m = re.search(r"_B(\d+)$", prefix)
+        if not m:
+            continue
+        batch_size = int(m.group(1))
+        robot_algo = prefix[: m.start()]
 
         # Split robot and algo
-        for algo in ALGORITHMS:
-            if robot_algo.endswith(f"_{algo}"):
-                robot = robot_algo[: -len(algo) - 1]
+        robot = None
+        algo = None
+        for a in ALGORITHMS:
+            if robot_algo.endswith(f"_{a}"):
+                robot = robot_algo[: -len(a) - 1]
+                algo = a
                 break
-        else:
+        if robot is None:
             continue
 
         if robot not in data:
@@ -80,12 +135,11 @@ def load_data(npz_path):
 
 def plot_throughput_per_robot(data, robot_name, output_dir):
     """Create a figure with subplots for each algorithm, one robot."""
-    n_algos = len(ALGORITHMS)
-    fig, axes = plt.subplots(2, 3, figsize=(14, 8))
+    fig, axes = plt.subplots(2, 3, figsize=(16, 9))
     axes = axes.flatten()
 
     label = ROBOT_LABELS.get(robot_name, robot_name)
-    fig.suptitle(f"Throughput: bard vs Pinocchio — {label}", fontsize=14, fontweight="bold")
+    fig.suptitle(f"Throughput — {label}", fontsize=14, fontweight="bold")
 
     for idx, algo in enumerate(ALGORITHMS):
         ax = axes[idx]
@@ -97,25 +151,25 @@ def plot_throughput_per_robot(data, robot_name, output_dir):
         algo_data = data[robot_name][algo]
         batch_sizes = sorted(algo_data.keys())
 
-        for backend in ["bard", "pinocchio"]:
-            throughputs = []
+        for backend in BACKEND_SAFE_NAMES:
+            medians = []
             bs_list = []
             for B in batch_sizes:
                 if backend in algo_data[B]:
-                    mean_time = np.mean(algo_data[B][backend])
-                    if mean_time > 0:
-                        throughputs.append(B / mean_time)
+                    med = np.median(algo_data[B][backend])
+                    if med > 0:
+                        medians.append(B / med)
                         bs_list.append(B)
 
-            if throughputs:
+            if medians:
                 ax.plot(
                     bs_list,
-                    throughputs,
+                    medians,
                     color=COLORS[backend],
                     linestyle=LINESTYLES[backend],
-                    marker="o",
+                    marker=MARKERS[backend],
                     markersize=4,
-                    label=backend,
+                    label=BACKEND_LABELS[backend],
                     linewidth=2,
                 )
 
@@ -124,7 +178,7 @@ def plot_throughput_per_robot(data, robot_name, output_dir):
         ax.set_title(algo, fontsize=12)
         ax.set_xlabel("Batch Size")
         ax.set_ylabel("Throughput (samples/sec)")
-        ax.legend(fontsize=9)
+        ax.legend(fontsize=8)
         ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
@@ -135,8 +189,11 @@ def plot_throughput_per_robot(data, robot_name, output_dir):
 
 
 def plot_speedup_table(data, output_dir, target_batch=4096):
-    """Generate a speedup comparison across all robots at a given batch size."""
-    fig, ax = plt.subplots(figsize=(10, 4))
+    """Generate a speedup comparison table (vs Pinocchio PyTorch) across all robots."""
+    # Methods to show speedup for (exclude baseline itself)
+    speedup_backends = [b for b in BACKEND_SAFE_NAMES if b != BASELINE_BACKEND]
+
+    fig, ax = plt.subplots(figsize=(12, 5))
     ax.axis("off")
 
     headers = ["Algorithm"] + [ROBOT_LABELS.get(r, r) for r in data.keys()]
@@ -146,9 +203,11 @@ def plot_speedup_table(data, output_dir, target_batch=4096):
         row = [algo]
         for robot in data.keys():
             if algo in data[robot] and target_batch in data[robot][algo]:
-                t_bard = np.mean(data[robot][algo][target_batch].get("bard", [1]))
-                t_pin = np.mean(data[robot][algo][target_batch].get("pinocchio", [1]))
-                speedup = t_pin / t_bard if t_bard > 0 else float("inf")
+                bd = data[robot][algo][target_batch]
+                t_base = np.median(bd.get(BASELINE_BACKEND, [1]))
+                # Show bard (compiled) speedup as the primary number
+                t_bard = np.median(bd.get("bard_compiled", bd.get("bard", [1])))
+                speedup = t_base / t_bard if t_bard > 0 else float("inf")
                 row.append(f"{speedup:.1f}x")
             else:
                 row.append("N/A")
@@ -164,6 +223,13 @@ def plot_speedup_table(data, output_dir, target_batch=4096):
         table[0, j].set_facecolor("#4CAF50")
         table[0, j].set_text_props(color="white", fontweight="bold")
 
+    ax.set_title(
+        f"Speedup vs {BACKEND_LABELS[BASELINE_BACKEND]} (B={target_batch})",
+        fontsize=13,
+        fontweight="bold",
+        pad=20,
+    )
+
     output_path = output_dir / f"speedup_table_B{target_batch}.pdf"
     fig.savefig(output_path, bbox_inches="tight", dpi=150)
     print(f"Saved: {output_path}")
@@ -171,9 +237,16 @@ def plot_speedup_table(data, output_dir, target_batch=4096):
 
 
 def plot_all_robots_single_algo(data, algo, output_dir):
-    """One plot per algorithm showing all robots."""
+    """One plot per algorithm showing speedup vs Pinocchio (PyTorch) for all robots.
+
+    Shows bard and bard (compiled) speedup lines per robot.
+    """
     fig, ax = plt.subplots(figsize=(8, 5))
-    ax.set_title(f"{algo} — Speedup vs Batch Size", fontsize=13, fontweight="bold")
+    ax.set_title(
+        f"{algo} — Speedup vs {BACKEND_LABELS[BASELINE_BACKEND]}",
+        fontsize=13,
+        fontweight="bold",
+    )
 
     robot_colors = plt.cm.Set2(np.linspace(0, 1, len(data)))
 
@@ -183,33 +256,37 @@ def plot_all_robots_single_algo(data, algo, output_dir):
 
         algo_data = robot_data[algo]
         batch_sizes = sorted(algo_data.keys())
-        speedups = []
-        bs_list = []
 
-        for B in batch_sizes:
-            t_bard = np.mean(algo_data[B].get("bard", [1]))
-            t_pin = np.mean(algo_data[B].get("pinocchio", [1]))
-            if t_bard > 0:
-                speedups.append(t_pin / t_bard)
-                bs_list.append(B)
+        for backend, ls in [("bard", "--"), ("bard_compiled", "-")]:
+            speedups = []
+            bs_list = []
+            for B in batch_sizes:
+                t_base = np.median(algo_data[B].get(BASELINE_BACKEND, [1]))
+                t_m = np.median(algo_data[B].get(backend, [0]))
+                if t_m > 0:
+                    speedups.append(t_base / t_m)
+                    bs_list.append(B)
 
-        label = ROBOT_LABELS.get(robot, robot)
-        ax.plot(
-            bs_list,
-            speedups,
-            marker="o",
-            markersize=5,
-            label=label,
-            color=robot_colors[idx],
-            linewidth=2,
-        )
+            if speedups:
+                suffix = "" if backend == "bard_compiled" else " (eager)"
+                label = f"{ROBOT_LABELS.get(robot, robot)}{suffix}"
+                ax.plot(
+                    bs_list,
+                    speedups,
+                    marker="o",
+                    markersize=5,
+                    label=label,
+                    color=robot_colors[idx],
+                    linewidth=2,
+                    linestyle=ls,
+                )
 
     ax.axhline(y=1.0, color="gray", linestyle=":", alpha=0.5, label="Break-even")
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel("Batch Size")
-    ax.set_ylabel("Speedup (bard / Pinocchio)")
-    ax.legend(fontsize=9)
+    ax.set_ylabel(f"Speedup vs {BACKEND_LABELS[BASELINE_BACKEND]}")
+    ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
 
     output_path = output_dir / f"speedup_{algo}.pdf"

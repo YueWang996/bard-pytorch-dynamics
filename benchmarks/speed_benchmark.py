@@ -102,7 +102,7 @@ METHOD_ADAM = "ADAM"
 METHOD_BARD = "bard"
 METHOD_BARD_COMPILED = "bard (compiled)"
 
-ALL_METHODS = [METHOD_PIN_CPP, METHOD_PIN_TORCH, METHOD_ADAM, METHOD_BARD, METHOD_BARD_COMPILED]
+ALL_METHODS = [METHOD_PIN_TORCH, METHOD_PIN_CPP, METHOD_ADAM, METHOD_BARD, METHOD_BARD_COMPILED]
 ALGORITHMS = ["FK", "Jacobian", "RNEA", "CRBA", "ABA", "Combined"]
 
 
@@ -596,7 +596,7 @@ def print_summary_table(robot_name, robot_info, results, batch_sizes, device):
             continue
         methods = [m for m in ALL_METHODS if m in results[algo][sample_B]]
 
-        # --- Timing table ---
+        # --- Timing table (median with IQR) ---
         headers = ["batch"] + [f"{m} (ms)" for m in methods]
         rows = []
         for B in batch_sizes:
@@ -605,28 +605,31 @@ def print_summary_table(robot_name, robot_info, results, batch_sizes, device):
             row = [B]
             for m in methods:
                 if m in results[algo][B]:
-                    t_ms = float(np.median(results[algo][B][m])) * 1000
-                    row.append(f"{t_ms:.3f}")
+                    t = results[algo][B][m] * 1000  # seconds to ms
+                    med = float(np.median(t))
+                    p25 = float(np.percentile(t, 25))
+                    p75 = float(np.percentile(t, 75))
+                    row.append(f"{med:.3f} ({p25:.3f}-{p75:.3f})")
                 else:
                     row.append("N/A")
             rows.append(row)
         print(tabulate(rows, headers=headers, tablefmt="grid"))
 
-        # --- Speedup vs ADAM (primary comparison) ---
-        if METHOD_ADAM in methods:
-            print(f"\n  {algo} -- Speedup vs {METHOD_ADAM}:")
-            speedup_methods = [m for m in methods if m != METHOD_ADAM]
+        # --- Speedup vs Pinocchio PyTorch (primary comparison) ---
+        if METHOD_PIN_TORCH in methods:
+            print(f"\n  {algo} -- Speedup vs {METHOD_PIN_TORCH}:")
+            speedup_methods = [m for m in methods if m != METHOD_PIN_TORCH]
             headers = ["batch"] + speedup_methods
             rows = []
             for B in batch_sizes:
                 if B not in results[algo]:
                     continue
-                t_adam = float(np.median(results[algo][B][METHOD_ADAM]))
+                t_base = float(np.median(results[algo][B][METHOD_PIN_TORCH]))
                 row = [B]
                 for m in speedup_methods:
                     if m in results[algo][B]:
                         t_m = float(np.median(results[algo][B][m]))
-                        speedup = t_adam / t_m if t_m > 0 else float("inf")
+                        speedup = t_base / t_m if t_m > 0 else float("inf")
                         row.append(f"{speedup:.2f}x")
                     else:
                         row.append("N/A")
@@ -650,7 +653,7 @@ def _print_basic_table(robot_info, results, batch_sizes, device):
 
         header = f"    {'B':>6s}"
         for m in methods:
-            header += f" | {m + ' (ms)':>20s}"
+            header += f" | {m + ' (ms)':>30s}"
         print(header)
         print(f"    {'-' * (len(header) - 4)}")
 
@@ -660,10 +663,14 @@ def _print_basic_table(robot_info, results, batch_sizes, device):
             row = f"    {B:6d}"
             for m in methods:
                 if m in results[algo][B]:
-                    t_ms = float(np.median(results[algo][B][m])) * 1000
-                    row += f" | {t_ms:20.3f}"
+                    t = results[algo][B][m] * 1000
+                    med = float(np.median(t))
+                    p25 = float(np.percentile(t, 25))
+                    p75 = float(np.percentile(t, 75))
+                    cell = f"{med:.3f} ({p25:.3f}-{p75:.3f})"
+                    row += f" | {cell:>30s}"
                 else:
-                    row += f" | {'N/A':>20s}"
+                    row += f" | {'N/A':>30s}"
             print(row)
 
 
