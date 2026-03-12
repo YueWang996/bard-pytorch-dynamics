@@ -832,9 +832,11 @@ class Model:
             R_base = self._I44[:, :3, :3].expand(batch_size, -1, -1)
             t_base = T_pc.new_zeros(batch_size, 3)
 
-        R_world_nodes = [None] * self.n_frames
-        t_world_nodes = [None] * self.n_frames
+        T_world = data.T_world[:batch_size]
+        T_world[:, :, 3, :3] = 0
+        T_world[:, :, 3, 3] = 1.0
 
+        # In-place write: directly into pre-allocated T_world, no torch.stack
         for node_idx in self._chain.topo_order:
             p_idx = self._chain.parent_list[node_idx]
             R_pc_i = R_pc_all[:, node_idx]
@@ -843,16 +845,11 @@ class Model:
             if p_idx == -1:
                 R_p, t_p = R_base, t_base
             else:
-                R_p, t_p = R_world_nodes[p_idx], t_world_nodes[p_idx]
+                R_p = T_world[:, p_idx, :3, :3]
+                t_p = T_world[:, p_idx, :3, 3]
 
-            R_world_nodes[node_idx] = R_p @ R_pc_i
-            t_world_nodes[node_idx] = (R_p @ t_pc_i.unsqueeze(-1)).squeeze(-1) + t_p
-
-        T_world = data.T_world[:batch_size]
-        T_world[:, :, :3, :3] = torch.stack(R_world_nodes, dim=1)
-        T_world[:, :, :3, 3] = torch.stack(t_world_nodes, dim=1)
-        T_world[:, :, 3, :3] = 0
-        T_world[:, :, 3, 3] = 1.0
+            T_world[:, node_idx, :3, :3] = R_p @ R_pc_i
+            T_world[:, node_idx, :3, 3] = (R_p @ t_pc_i.unsqueeze(-1)).squeeze(-1) + t_p
 
         # Also set T_world_base scratch for gravity computation
         if self.has_floating_base and q is not None:
@@ -1024,8 +1021,9 @@ class Model:
         R_frame = T_world_to_frame[:, :3, :3]  # (B, 3, 3)
         p_frame = T_world_to_frame[:, :3, 3]  # (B, 3)
 
-        # Output Jacobian — computed directly in target frame, no final transform
-        J = data.Xup.new_zeros(batch_size, 6, self.nv)
+        # Output Jacobian — use pre-allocated workspace, zero it in-place
+        J = data.J_local[:batch_size]
+        J.zero_()
 
         # Floating base columns (6x6 adjoint — one-time, not per-joint)
         if self.has_floating_base:
