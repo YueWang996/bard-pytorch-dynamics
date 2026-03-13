@@ -235,7 +235,6 @@ class Model:
         self._init_vectorized_constants()
         self._tree_levels = self._compute_tree_levels()
 
-
         # --- Pre-compute RNEA tau extraction indices (vectorized gather) ---
         self._actuated_nodes_list = []
         self._actuated_vel_indices_list = []
@@ -733,13 +732,19 @@ class Model:
 
             # Pre-compute flags to avoid Tensor.item()/tolist() at runtime (graph breaks)
             is_root_level = parent_indices[0] == -1
-            contains_fb_root = (
-                self.has_floating_base
-                and self.urdf_root_idx in current_level_nodes
-            )
+            contains_fb_root = self.has_floating_base and self.urdf_root_idx in current_level_nodes
 
-            levels.append((nodes_t, parents_t, act_pos_t, act_jnt_t, act_vel_t,
-                           is_root_level, contains_fb_root))
+            levels.append(
+                (
+                    nodes_t,
+                    parents_t,
+                    act_pos_t,
+                    act_jnt_t,
+                    act_vel_t,
+                    is_root_level,
+                    contains_fb_root,
+                )
+            )
             next_level = []
             for n in current_level_nodes:
                 next_level.extend(children_list[n])
@@ -1706,16 +1711,25 @@ class Model:
             a_in_node0 = inv_Xup_root @ a[:, root_idx]
             qdd_out[:, :6] = (a_in_node0 - a_gravity_base).squeeze(-1)
 
-        for (nodes_t, parents_t, act_pos_t, act_jnt_t, act_vel_t,
-             is_root_level, contains_fb_root) in self._tree_levels:
+        for (
+            nodes_t,
+            parents_t,
+            act_pos_t,
+            act_jnt_t,
+            act_vel_t,
+            is_root_level,
+            contains_fb_root,
+        ) in self._tree_levels:
             n_level = nodes_t.shape[0]
 
             # Skip root level (parent == -1)
             if is_root_level:
                 if not self.has_floating_base:
                     # Fixed base: a_parent = gravity for root
-                    a[:, nodes_t] = Xup_b[:, nodes_t] @ a_gravity_base.unsqueeze(1).expand(
-                        -1, n_level, -1, -1) + c[:, nodes_t]
+                    a[:, nodes_t] = (
+                        Xup_b[:, nodes_t] @ a_gravity_base.unsqueeze(1).expand(-1, n_level, -1, -1)
+                        + c[:, nodes_t]
+                    )
                 continue
 
             # Skip floating-base root node level (already solved via linalg.solve)
@@ -1732,11 +1746,11 @@ class Model:
                 act = act_pos_t
                 act_nodes = nodes_t[act]
 
-                U_act = U[:, act_nodes]             # (B, n_act, 6, 1)
+                U_act = U[:, act_nodes]  # (B, n_act, 6, 1)
                 d_act = d[:, act_nodes].clamp(min=1e-12)  # (B, n_act)
-                u_act = u[:, act_nodes]             # (B, n_act)
+                u_act = u[:, act_nodes]  # (B, n_act)
 
-                a_prime_act = a_prime[:, act]       # (B, n_act, 6, 1)
+                a_prime_act = a_prime[:, act]  # (B, n_act, 6, 1)
                 qdd_act = (
                     u_act - (U_act.transpose(-2, -1) @ a_prime_act).squeeze(-1).squeeze(-1)
                 ) / d_act  # (B, n_act)
