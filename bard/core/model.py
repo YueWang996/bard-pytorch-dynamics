@@ -235,6 +235,7 @@ class Model:
         self._init_vectorized_constants()
         self._tree_levels = self._compute_tree_levels()
 
+
         # --- Pre-compute RNEA tau extraction indices (vectorized gather) ---
         self._actuated_nodes_list = []
         self._actuated_vel_indices_list = []
@@ -384,6 +385,7 @@ class Model:
         # Rebuild vectorized constants and collapsed FK paths on new device/dtype
         self._init_vectorized_constants()
         self._tree_levels = self._compute_tree_levels()
+
         self._fk_collapsed_paths = self._build_fk_collapsed_paths()
         self._actuated_nodes_t = self._actuated_nodes_t.to(device=self.device)
         self._actuated_vel_indices_t = self._actuated_vel_indices_t.to(device=self.device)
@@ -469,11 +471,11 @@ class Model:
             self._ensure_xup(data)
 
             S = data.S[:batch_size]
-            for nodes_t, parents_t, act_pos_t, act_jnt_t in self._tree_levels:
+            for nodes_t, parents_t, act_pos_t, act_jnt_t, _, is_root_level, _ in self._tree_levels:
                 n_level = nodes_t.shape[0]
 
                 # Parent velocity
-                if parents_t[0] == -1:
+                if is_root_level:
                     if self.has_floating_base and v_base is not None:
                         v_parent = v_base.unsqueeze(-1).unsqueeze(1).expand(-1, n_level, -1, -1)
                     else:
@@ -720,7 +722,24 @@ class Model:
                 if act_joint_indices
                 else None
             )
-            levels.append((nodes_t, parents_t, act_pos_t, act_jnt_t))
+            # Pre-compute velocity indices for actuated nodes (for ABA forward pass)
+            act_vel_t = None
+            if act_positions:
+                vel_ids = []
+                for i in act_positions:
+                    node_idx = current_level_nodes[i]
+                    vel_ids.append(self.vel_indices_list[node_idx])
+                act_vel_t = torch.tensor(vel_ids, dtype=torch.long, device=self.device)
+
+            # Pre-compute flags to avoid Tensor.item()/tolist() at runtime (graph breaks)
+            is_root_level = parent_indices[0] == -1
+            contains_fb_root = (
+                self.has_floating_base
+                and self.urdf_root_idx in current_level_nodes
+            )
+
+            levels.append((nodes_t, parents_t, act_pos_t, act_jnt_t, act_vel_t,
+                           is_root_level, contains_fb_root))
             next_level = []
             for n in current_level_nodes:
                 next_level.extend(children_list[n])
@@ -1287,11 +1306,11 @@ class Model:
             a_gravity_base = a_gravity_world
 
         # Forward pass: level-order batched acceleration computation
-        for nodes_t, parents_t, act_pos_t, act_jnt_t in self._tree_levels:
+        for nodes_t, parents_t, act_pos_t, act_jnt_t, _, is_root_level, _ in self._tree_levels:
             n_level = nodes_t.shape[0]
 
             # Gather parent accelerations for this level
-            if parents_t[0] == -1:
+            if is_root_level:
                 if self.has_floating_base:
                     a_parent = (
                         (a_base.unsqueeze(-1) + a_gravity_base)
@@ -1373,15 +1392,15 @@ class Model:
     def _crba_impl(self, data: Data) -> torch.Tensor:
         self._ensure_xup(data)
         batch_size = data.batch_size
-        Xup = data.Xup
-        S = data.S
+        Xup = data.Xup[:batch_size]
+        S = data.S[:batch_size]
+        Xup_T = data.Xup_T[:batch_size]
 
         I_spatial_batched = self.I_spatial.unsqueeze(0).expand(batch_size, -1, -1, -1)
         Ic = [I_spatial_batched[:, i].clone() for i in range(self.n_frames)]
         M = Xup.new_zeros(batch_size, self.nv, self.nv)
-        Xup_T = data.Xup_T[:batch_size]
 
-        # Backward pass: composite inertia accumulation
+        # Backward pass: composite inertia accumulation (per-node)
         use_triton = Xup.is_cuda and self._use_triton_kernels and not Xup.requires_grad
         if use_triton:
             for node_idx in reversed(self._chain.topo_order):
@@ -1390,14 +1409,14 @@ class Model:
                     fused_xtmx_add(
                         Xup_T[:, node_idx],
                         Ic[node_idx],
-                        Xup[:batch_size, node_idx],
+                        Xup[:, node_idx],
                         Ic[p],
                     )
         else:
             for node_idx in reversed(self._chain.topo_order):
                 p = self._chain.parent_list[node_idx]
                 if p != -1:
-                    Ic[p] = Ic[p] + (Xup_T[:, node_idx] @ Ic[node_idx] @ Xup[:batch_size, node_idx])
+                    Ic[p] = Ic[p] + (Xup_T[:, node_idx] @ Ic[node_idx] @ Xup[:, node_idx])
 
         # Assemble mass matrix
         root_idx = self.urdf_root_idx
@@ -1409,7 +1428,7 @@ class Model:
             if col_idx == -1:
                 continue
 
-            S_i = S[:batch_size, node_idx]
+            S_i = S[:, node_idx]
             F_i = Ic[node_idx] @ S_i
 
             # Diagonal element
@@ -1433,7 +1452,7 @@ class Model:
 
                 parent_col = self.vel_indices_list[current_node]
                 if parent_col != -1:
-                    S_parent = S[:batch_size, current_node]
+                    S_parent = S[:, current_node]
                     value = (S_parent.transpose(1, 2) @ f_prop).squeeze(-1).squeeze(-1)
                     M[:, col_idx, parent_col] = value
                     M[:, parent_col, col_idx] = value
@@ -1614,8 +1633,7 @@ class Model:
                 dim=2,
             )
 
-        # ---- Pass 2: Backward — accumulate articulated body inertia ----
-        # Use fused Triton kernel for Xup_T @ Ia @ Xup when on CUDA and no grads needed
+        # ---- Pass 2: Backward — accumulate articulated body inertia (per-node) ----
         use_triton = Xup.is_cuda and self._use_triton_kernels and not tau.requires_grad
         for node_idx in reversed(self._chain.topo_order):
             j_idx = self._chain.joint_indices_list[node_idx]
@@ -1669,7 +1687,9 @@ class Model:
                         )
                     pA[:, p_idx] = pA[:, p_idx] + Xup_i_T @ pA[:, node_idx]
 
-        # ---- Pass 3: Forward — compute accelerations ----
+        # ---- Pass 3: Forward — compute accelerations (level-order) ----
+        Xup_b = Xup[:batch_size]
+        S_b = S[:batch_size]
         root_idx = self.urdf_root_idx
         qdd_out = tau.new_zeros(batch_size, self.nv)
 
@@ -1686,36 +1706,50 @@ class Model:
             a_in_node0 = inv_Xup_root @ a[:, root_idx]
             qdd_out[:, :6] = (a_in_node0 - a_gravity_base).squeeze(-1)
 
-        for node_idx in self._chain.topo_order:
-            p_idx = self._chain.parent_list[node_idx]
-            is_actuated = self._is_actuated[node_idx]
+        for (nodes_t, parents_t, act_pos_t, act_jnt_t, act_vel_t,
+             is_root_level, contains_fb_root) in self._tree_levels:
+            n_level = nodes_t.shape[0]
 
-            # Skip root nodes for floating base (already computed)
-            if self.has_floating_base and (node_idx == 0 or node_idx == root_idx):
+            # Skip root level (parent == -1)
+            if is_root_level:
+                if not self.has_floating_base:
+                    # Fixed base: a_parent = gravity for root
+                    a[:, nodes_t] = Xup_b[:, nodes_t] @ a_gravity_base.unsqueeze(1).expand(
+                        -1, n_level, -1, -1) + c[:, nodes_t]
                 continue
 
-            if p_idx == -1:
-                a_parent = a_gravity_base
-            else:
-                a_parent = a[:, p_idx]
+            # Skip floating-base root node level (already solved via linalg.solve)
+            if contains_fb_root:
+                continue
 
-            if is_actuated:
-                # a'_i = Xup_i * a_parent + c_i
-                a_prime = Xup[:batch_size, node_idx] @ a_parent + c[:, node_idx]
-                qdd_i = (
-                    u[:, node_idx]
-                    - (U[:, node_idx].transpose(1, 2) @ a_prime).squeeze(-1).squeeze(-1)
-                ) / d[:, node_idx].clamp(min=1e-12)
-                a[:, node_idx] = a_prime + S[:batch_size, node_idx] * qdd_i.unsqueeze(-1).unsqueeze(
-                    -1
-                )
+            # Gather parent accelerations
+            a_parent_level = a[:, parents_t]  # (B, n_level, 6, 1)
 
-                vel_idx = self.vel_indices_list[node_idx]
-                if vel_idx != -1:
-                    qdd_out[:, vel_idx] = qdd_i
-            else:
-                # Fixed joint: c=0, so a_i = Xup @ a_parent
-                a[:, node_idx] = Xup[:batch_size, node_idx] @ a_parent
+            # a' = Xup @ a_parent + c (c is zero for non-actuated)
+            a_prime = Xup_b[:, nodes_t] @ a_parent_level + c[:, nodes_t]  # (B, n_level, 6, 1)
+
+            if act_pos_t is not None:
+                act = act_pos_t
+                act_nodes = nodes_t[act]
+
+                U_act = U[:, act_nodes]             # (B, n_act, 6, 1)
+                d_act = d[:, act_nodes].clamp(min=1e-12)  # (B, n_act)
+                u_act = u[:, act_nodes]             # (B, n_act)
+
+                a_prime_act = a_prime[:, act]       # (B, n_act, 6, 1)
+                qdd_act = (
+                    u_act - (U_act.transpose(-2, -1) @ a_prime_act).squeeze(-1).squeeze(-1)
+                ) / d_act  # (B, n_act)
+
+                # a = a' + S * qdd for actuated nodes
+                S_act = S_b[:, act_nodes]
+                a_prime = a_prime.clone()
+                a_prime[:, act] = a_prime_act + S_act * qdd_act.unsqueeze(-1).unsqueeze(-1)
+
+                # Store joint accelerations (vectorized)
+                qdd_out[:, act_vel_t] = qdd_act
+
+            a[:, nodes_t] = a_prime
 
         return qdd_out
 
