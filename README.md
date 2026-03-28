@@ -77,11 +77,13 @@ For single-frame queries without needing a full tree traversal:
 T = bard.forward_kinematics(model, data, frame_id, q=q)  # Path-only traversal
 ```
 
-## Benchmarks 🚀
+## Benchmarks
 
-`bard` is designed for high performance, especially when processing large batches of robot states on GPU. The benchmark below compares the computational speed of `bard` against Pinocchio for common robotics operations on a Unitree Go2 robot model. All `bard` computations were executed on an NVIDIA H200 GPU, while Pinocchio benchmarks include both its native C++ implementation (CPU) and PyTorch wrapper (GPU CUDA).
+Speedup over Pinocchio (PyTorch wrapper) at batch size 4096 on an NVIDIA H200, tested across four robots (xArm7, SPARC, Go2, H1) and six algorithm categories. `bard` achieves up to 64x for FK and 63x for Jacobian; dynamics algorithms (RNEA, CRBA, ABA) see 5--10x gains.
 
-![Performance Benchmark](./benchmark.png)
+![Speedup at batch size 4096 on NVIDIA H200](./benchmark.png)
+
+Pinocchio runs single-threaded on CPU (`OMP_NUM_THREADS=1`) and processes configurations sequentially, which is the typical usage pattern within a PyTorch training pipeline. Cross-GPU results (H100, A100, L40S, L4) are available in the paper's supplementary material.
 
 ## Installation
 

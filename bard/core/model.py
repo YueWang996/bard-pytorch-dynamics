@@ -393,8 +393,15 @@ class Model:
         return self
 
     def enable_compilation(self, enabled: bool = True, **compile_kwargs):
-        """Enable or disable ``torch.compile`` for internal methods."""
+        """Enable or disable ``torch.compile`` for kinematics methods.
+
+        Dynamics algorithms (RNEA, CRBA, ABA) always run in eager mode
+        because their sequential tree-traversal loops with small batched
+        matmuls do not benefit from compilation.
+        """
         self._compile_enabled = enabled
+        # Triton custom kernels are only used in dynamics (not compiled),
+        # so they can remain enabled regardless of compilation setting.
         if compile_kwargs:
             self._compile_kwargs.update(compile_kwargs)
         self._setup_callables()
@@ -410,14 +417,18 @@ class Model:
         self._aba_fn = self._aba_impl
         if self._compile_enabled:
             kwargs = self._compile_kwargs.copy()
+            # Compile kinematics: element-wise ops that benefit from kernel fusion
             self._update_kinematics_fn = torch.compile(self._update_kinematics_impl, **kwargs)
             self._fk_fn = torch.compile(self._fk_impl, **kwargs)
-            self._rnea_fn = torch.compile(self._rnea_impl, **kwargs)
-            self._crba_fn = torch.compile(self._crba_impl, **kwargs)
             self._jacobian_fn = torch.compile(self._jacobian_impl, **kwargs)
             self._jacobian_standalone_fn = torch.compile(self._jacobian_standalone_impl, **kwargs)
             self._spatial_acceleration_fn = torch.compile(self._spatial_acceleration_impl, **kwargs)
-            self._aba_fn = torch.compile(self._aba_impl, **kwargs)
+            # Dynamics (RNEA, CRBA, ABA) are NOT compiled: their sequential
+            # tree-traversal loops with small (6x6) batched matmuls cannot be
+            # parallelised by the compiler.  Inductor emits many tiny Triton
+            # kernels whose launch overhead exceeds any fusion benefit, making
+            # compiled dynamics slower than eager — especially at large batch
+            # sizes where the matmuls are already compute-saturated.
 
     # ========================================================================
     # Core: update_kinematics
@@ -1375,10 +1386,10 @@ class Model:
         for node_idx in reversed(self._chain.topo_order):
             children = self._chain.children_list[node_idx]
             if len(children) == 1:
-                f[:, node_idx] = f[:, node_idx] + Xup_T[:, children[0]] @ f[:, children[0]]
+                f[:, node_idx].add_(Xup_T[:, children[0]] @ f[:, children[0]])
             elif len(children) > 1:
                 for child_idx in children:
-                    f[:, node_idx] = f[:, node_idx] + Xup_T[:, child_idx] @ f[:, child_idx]
+                    f[:, node_idx].add_(Xup_T[:, child_idx] @ f[:, child_idx])
 
         # Extract generalized forces
         tau = qdd.new_zeros(batch_size, self.nv)
@@ -1402,31 +1413,45 @@ class Model:
         Xup_T = data.Xup_T[:batch_size]
 
         I_spatial_batched = self.I_spatial.unsqueeze(0).expand(batch_size, -1, -1, -1)
-        Ic = [I_spatial_batched[:, i].clone() for i in range(self.n_frames)]
         M = Xup.new_zeros(batch_size, self.nv, self.nv)
 
         # Backward pass: composite inertia accumulation (per-node)
+        # Use tensor Ic for inference (compile-friendly), list Ic for autograd
         use_triton = Xup.is_cuda and self._use_triton_kernels and not Xup.requires_grad
-        if use_triton:
+        if Xup.requires_grad:
+            # List-based: each Ic[p] = Ic[p] + ... creates new tensors (autograd-safe)
+            Ic_list = [I_spatial_batched[:, i].clone() for i in range(self.n_frames)]
             for node_idx in reversed(self._chain.topo_order):
                 p = self._chain.parent_list[node_idx]
                 if p != -1:
-                    fused_xtmx_add(
-                        Xup_T[:, node_idx],
-                        Ic[node_idx],
-                        Xup[:, node_idx],
-                        Ic[p],
+                    Ic_list[p] = Ic_list[p] + (
+                        Xup_T[:, node_idx] @ Ic_list[node_idx] @ Xup[:, node_idx]
                     )
+            # Stack back into tensor for assembly phase
+            Ic = torch.stack(Ic_list, dim=1)
         else:
-            for node_idx in reversed(self._chain.topo_order):
-                p = self._chain.parent_list[node_idx]
-                if p != -1:
-                    Ic[p] = Ic[p] + (Xup_T[:, node_idx] @ Ic[node_idx] @ Xup[:, node_idx])
+            # Tensor-based: in-place update (torch.compile friendly, no autograd)
+            Ic = I_spatial_batched.clone()
+            if use_triton:
+                for node_idx in reversed(self._chain.topo_order):
+                    p = self._chain.parent_list[node_idx]
+                    if p != -1:
+                        fused_xtmx_add(
+                            Xup_T[:, node_idx],
+                            Ic[:, node_idx],
+                            Xup[:, node_idx],
+                            Ic[:, p],
+                        )
+            else:
+                for node_idx in reversed(self._chain.topo_order):
+                    p = self._chain.parent_list[node_idx]
+                    if p != -1:
+                        Ic[:, p].add_(Xup_T[:, node_idx] @ Ic[:, node_idx] @ Xup[:, node_idx])
 
         # Assemble mass matrix
         root_idx = self.urdf_root_idx
         if self.has_floating_base:
-            M[:, :6, :6] = Ic[root_idx]
+            M[:, :6, :6] = Ic[:, root_idx]
 
         for node_idx in self._chain.topo_order:
             col_idx = self.vel_indices_list[node_idx]
@@ -1434,7 +1459,7 @@ class Model:
                 continue
 
             S_i = S[:, node_idx]
-            F_i = Ic[node_idx] @ S_i
+            F_i = Ic[:, node_idx] @ S_i
 
             # Diagonal element
             M[:, col_idx, col_idx] = (S_i.transpose(1, 2) @ F_i).squeeze(-1).squeeze(-1)
@@ -1660,12 +1685,12 @@ class Model:
                 u[:, node_idx] = u_i
 
                 d_safe = d_i.clamp(min=1e-12)
-                d_inv = 1.0 / d_safe.unsqueeze(-1).unsqueeze(-1)
+                d_inv = d_safe.reciprocal().unsqueeze(-1).unsqueeze(-1)
                 Ia = IA_i - U_i @ U_i.transpose(1, 2) * d_inv
                 pa = (
                     pA[:, node_idx]
                     + Ia @ c[:, node_idx]
-                    + U_i * (u_i / d_safe).unsqueeze(-1).unsqueeze(-1)
+                    + U_i * (u_i * d_safe.reciprocal()).unsqueeze(-1).unsqueeze(-1)
                 )
 
                 if p_idx != -1:
@@ -1673,8 +1698,8 @@ class Model:
                     if use_triton:
                         fused_xtmx_add(Xup_i_T, Ia, Xup[:batch_size, node_idx], IA[:, p_idx])
                     else:
-                        IA[:, p_idx] = IA[:, p_idx] + Xup_i_T @ Ia @ Xup[:batch_size, node_idx]
-                    pA[:, p_idx] = pA[:, p_idx] + Xup_i_T @ pa
+                        IA[:, p_idx].add_(Xup_i_T @ Ia @ Xup[:batch_size, node_idx])
+                    pA[:, p_idx].add_(Xup_i_T @ pa)
             else:
                 # Fixed joint: propagate IA and pA upward
                 if p_idx != -1:
@@ -1687,10 +1712,8 @@ class Model:
                             IA[:, p_idx],
                         )
                     else:
-                        IA[:, p_idx] = (
-                            IA[:, p_idx] + Xup_i_T @ IA[:, node_idx] @ Xup[:batch_size, node_idx]
-                        )
-                    pA[:, p_idx] = pA[:, p_idx] + Xup_i_T @ pA[:, node_idx]
+                        IA[:, p_idx].add_(Xup_i_T @ IA[:, node_idx] @ Xup[:batch_size, node_idx])
+                    pA[:, p_idx].add_(Xup_i_T @ pA[:, node_idx])
 
         # ---- Pass 3: Forward — compute accelerations (level-order) ----
         Xup_b = Xup[:batch_size]
@@ -1753,7 +1776,7 @@ class Model:
                 a_prime_act = a_prime[:, act]  # (B, n_act, 6, 1)
                 qdd_act = (
                     u_act - (U_act.transpose(-2, -1) @ a_prime_act).squeeze(-1).squeeze(-1)
-                ) / d_act  # (B, n_act)
+                ) * d_act.reciprocal()  # (B, n_act)
 
                 # a = a' + S * qdd for actuated nodes
                 S_act = S_b[:, act_nodes]

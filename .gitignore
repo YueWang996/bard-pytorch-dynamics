@@ -18,5 +18,7 @@ __pycache__/
 *.egg-info/
 *.egg-info
 
-/benchmarks/results/
+/benchmarks/
+/experiment/
+/ICANN26/
 /docs/build
